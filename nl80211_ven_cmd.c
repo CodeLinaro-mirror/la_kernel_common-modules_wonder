@@ -658,9 +658,9 @@ static int wonder_vendor_cmd_get_mac_tsf(struct wiphy *wiphy,
 	u32 mac_tsf;
 	int ret;
 
-	sys_time_before = ktime_get_ns();
+	sys_time_before = ktime_get_boottime_ns();
 	ret = wondertap_get_mac_tsf(&wonder->wondertap_data, &mac_tsf);
-	sys_time_after = ktime_get_ns();
+	sys_time_after = ktime_get_boottime_ns();
 	if (ret)
 		return ret;
 
