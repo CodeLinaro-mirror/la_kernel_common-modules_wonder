@@ -87,16 +87,14 @@ static int wonder_probe(struct auxiliary_device *adev,
 		dev_err(dev, "Failed to get wondertap capabilities, error: %d\n", ret);
 		return ret;
 	}
-	wonder_debugfs_init(wonder);
-
-	return 0;
+	return wonder_debugfs_init(wonder);
 }
 
 static void wonder_remove(struct auxiliary_device *adev)
 {
 	struct wonder_data *wonder = auxiliary_get_drvdata(adev);
 
-	wonder_debugfs_exit();
+	wonder_debugfs_exit(wonder);
 	wonder_mac80211_exit(wonder);
 }
 
