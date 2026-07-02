@@ -424,6 +424,7 @@ static const char *wonder_ver_to_str(enum wondertap_ver ver)
 	case WONDER_VERSION_3_6_1: return "WONDER_VERSION_3_6_1 (or 3_6_2/3_6_3)";
 	case WONDER_VERSION_3_6_4: return "WONDER_VERSION_3_6_4";
 	case WONDER_VERSION_3_6_5: return "WONDER_VERSION_3_6_5";
+	case WONDER_VERSION_3_6_6: return "WONDER_VERSION_3_6_6";
 	default: return "UNKNOWN_VERSION";
 	}
 }

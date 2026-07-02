@@ -24,13 +24,13 @@
 module_param(physical_name, charp, 0444);
 MODULE_PARM_DESC(physical_name, "Interface name to use (e.g., wlan0, radiotap0, ...)");
 
-#define WONDER_MAX_COMPAT_VERSIONS 6
-static int wonder_ver_match_table[WONDER_MAX_COMPAT_VERSIONS] = {
+static int wonder_ver_match_table[WONDER_VERSION_MAX] = {
 	WONDER_VERSION_3_4,
 	WONDER_VERSION_3_5,
 	WONDER_VERSION_3_6_4,
 	WONDER_VERSION_3_6_3,
 	WONDER_VERSION_3_6_5,
+	WONDER_VERSION_3_6_6,
 	-1,
 };
 
@@ -42,7 +42,7 @@ static bool wonder_ver_can_support(enum wondertap_ver device_ver, enum wondertap
 	if (ver < 0 || driver_ver >= WONDER_VERSION_MAX)
 		return false;
 
-	for (i = 0; i < WONDER_MAX_COMPAT_VERSIONS; i++) {
+	for (i = 0; i < WONDER_VERSION_MAX; i++) {
 		if (wonder_ver_match_table[i] == -1)
 			break;
 		if (wonder_ver_match_table[i] == device_ver)
