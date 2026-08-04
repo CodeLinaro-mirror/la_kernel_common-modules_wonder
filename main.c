@@ -60,19 +60,16 @@ static int wonder_probe(struct auxiliary_device *adev,
 	struct device *dev = &wonder_adev->adev.dev;
 	int ret;
 
-	wonder = wonder_mac80211_init(dev);
-	if (!wonder)
-		return -ENODEV;
+	wondertap = devm_kzalloc(dev, sizeof(*wondertap), GFP_KERNEL);
+	if (!wondertap)
+		return -ENOMEM;
 
-	wondertap = &wonder->wondertap_data;
 	/* Assign wondertap interface version will be used in the match process. */
-	wondertap->ver = WONDER_VERSION_3_6_5;
-	auxiliary_set_drvdata(&wonder_adev->adev, wonder);
+	wondertap->ver = WONDER_VERSION_3_6_6;
 
 	if (!wonder_ver_can_support(wonder_adev->ver, wondertap->ver)) {
 		dev_err(dev, "%s(): wondertap interface version mismatch(%d,%d)!\n",
 			__func__, wonder_adev->ver, wondertap->ver);
-		wonder_mac80211_exit(wonder);
 		return -EINVAL;
 	}
 
@@ -87,6 +84,12 @@ static int wonder_probe(struct auxiliary_device *adev,
 		dev_err(dev, "Failed to get wondertap capabilities, error: %d\n", ret);
 		return ret;
 	}
+
+	wonder = wonder_mac80211_init(dev, wondertap);
+	if (!wonder)
+		return -ENODEV;
+
+	auxiliary_set_drvdata(&wonder_adev->adev, wonder);
 	return wonder_debugfs_init(wonder);
 }
 

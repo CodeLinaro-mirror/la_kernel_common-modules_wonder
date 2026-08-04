@@ -30,7 +30,7 @@ static int wonder_capabilities_show(struct seq_file *m, void *v)
 		return -ENODEV;
 	}
 
-	ret = wondertap_get_capabilities(&wonder->wondertap_data, &caps);
+	ret = wondertap_get_capabilities(wonder->wondertap_data, &caps);
 	if (ret) {
 		pr_err("Failed to get wondertap capabilities, error: %d\n", ret);
 		return -EOPNOTSUPP;
@@ -44,7 +44,7 @@ DEFINE_SHOW_ATTRIBUTE(wonder_capabilities);
 static int wonder_channel_status_report_show(struct seq_file *m, void *v)
 {
 	struct wonder_data *wonder = m->private;
-	struct wondertap_data *wondertap = &wonder->wondertap_data;
+	struct wondertap_data *wondertap = wonder->wondertap_data;
 	struct wondertap_channel_status_report *report;
 	u32 num_channels;
 	size_t size;
@@ -96,7 +96,7 @@ static void wonder_channel_status_report_periodic_work(struct work_struct *work)
 {
 	struct wonder_data *wonder = container_of(work, struct wonder_data,
 						  channel_status_report_work.work);
-	struct wondertap_data *wondertap = &wonder->wondertap_data;
+	struct wondertap_data *wondertap = wonder->wondertap_data;
 	struct wondertap_channel_status_report *report;
 	const char *tag = "wonder";
 	u32 num_channels;
@@ -157,7 +157,7 @@ static ssize_t wonder_channel_status_report_write(struct file *file, const char 
 {
 	struct seq_file *m = file->private_data;
 	struct wonder_data *wonder = m->private;
-	struct wondertap_data *wondertap = &wonder->wondertap_data;
+	struct wondertap_data *wondertap = wonder->wondertap_data;
 	u32 val;
 	int ret;
 
@@ -194,7 +194,7 @@ static const struct file_operations wonder_channel_status_report_fops = {
 static int wonder_channel_schedule_request_show(struct seq_file *m, void *v)
 {
 	struct wonder_data *wonder = m->private;
-	struct wondertap_data *wondertap = &wonder->wondertap_data;
+	struct wondertap_data *wondertap = wonder->wondertap_data;
 	struct channel_schedule_request *schedule;
 	int i;
 
@@ -230,7 +230,7 @@ static void wonder_channel_schedule_request_periodic_work(struct work_struct *wo
 {
 	struct wonder_data *wonder = container_of(work, struct wonder_data,
 						  channel_schedule_request_work.work);
-	struct wondertap_data *wondertap = &wonder->wondertap_data;
+	struct wondertap_data *wondertap = wonder->wondertap_data;
 	struct channel_schedule_request *schedule;
 	const char *tag = "wonder";
 	int i;
@@ -272,7 +272,7 @@ static ssize_t wonder_channel_schedule_request_write(struct file *file, const ch
 {
 	struct seq_file *m = file->private_data;
 	struct wonder_data *wonder = m->private;
-	struct wondertap_data *wondertap = &wonder->wondertap_data;
+	struct wondertap_data *wondertap = wonder->wondertap_data;
 	u32 val;
 	int ret;
 
@@ -309,7 +309,7 @@ static const struct file_operations wonder_channel_schedule_request_fops = {
 static int wonder_station_query_show(struct seq_file *m, void *v)
 {
 	struct wonder_data *wonder = m->private;
-	struct wondertap_data *wondertap = &wonder->wondertap_data;
+	struct wondertap_data *wondertap = wonder->wondertap_data;
 	struct wondertap_station_info sta_info = {0};
 	int ret;
 
@@ -377,7 +377,7 @@ static ssize_t wonder_station_query_write(struct file *file, const char __user *
 {
 	struct seq_file *m = file->private_data;
 	struct wonder_data *wonder = m->private;
-	struct wondertap_data *wondertap = &wonder->wondertap_data;
+	struct wondertap_data *wondertap = wonder->wondertap_data;
 	char buf[20];
 	size_t len;
 
@@ -432,7 +432,7 @@ static const char *wonder_ver_to_str(enum wondertap_ver ver)
 static int wonder_version_show(struct seq_file *m, void *v)
 {
 	struct wonder_data *wonder = m->private;
-	struct wondertap_data *wondertap = &wonder->wondertap_data;
+	struct wondertap_data *wondertap = wonder->wondertap_data;
 
 	mutex_lock(&wondertap->lock);
 	seq_printf(m, "Wonder version: %s\n", wonder_ver_to_str(wondertap->ver));
