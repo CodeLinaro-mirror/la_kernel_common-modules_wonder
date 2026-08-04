@@ -411,8 +411,10 @@ struct wondertap_capability {
 			 * 0: not support, 1: 1NSS, 2: 2NSS, etc.
 			 */
 			u32 nss: 4;
+			/* @brief FCS not support flag: 0 (FCS support), 1 (FCS not support). */
+			u32 fcs_not_support: 1;
 			/* @brief Reserved for future use. Must be 0. */
-			u32 reserved: 13;
+			u32 reserved: 12;
 		} bits;
 	};
 	/**

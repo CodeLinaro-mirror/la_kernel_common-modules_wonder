@@ -1102,6 +1102,13 @@ static int wonder_tx_last_beacon(struct ieee80211_hw *hw)
 	return wonder->iftype == NL80211_IFTYPE_ADHOC;
 }
 
+
+static int wonder_set_rts_threshold(struct ieee80211_hw *hw, int radio_idx, u32 value)
+{
+	/* HAS_RATE_CONTROL requires this op; wonder has no RTS/CTS logic */
+	return 0;
+}
+
 static const struct ieee80211_ops wonder_mac80211_ops = {
 	.tx                 = wonder_tx,
 	.start              = wonder_start,
@@ -1131,6 +1138,8 @@ static const struct ieee80211_ops wonder_mac80211_ops = {
 	.sta_rate_tbl_update = wonder_sta_rate_tbl_update,
 	/* -- ADHOC Support -- */
 	.tx_last_beacon = wonder_tx_last_beacon,
+	/* Required when HAS_RATE_CONTROL is set */
+	.set_rts_threshold = wonder_set_rts_threshold,
 };
 
 int wonder_features_init(struct wonder_data *wonder)
@@ -1223,7 +1232,12 @@ void *wonder_mac80211_init(struct device *dev, struct wondertap_data *wondertap)
 	ieee80211_hw_set(hw, AMPDU_AGGREGATION);
 	ieee80211_hw_set(hw, TX_AMPDU_SETUP_IN_HW);
 	/* Tell mac80211 that RX frames include FCS so it trims them correctly */
-	ieee80211_hw_set(hw, RX_INCLUDES_FCS);
+	if (!wondertap->cap.bits.fcs_not_support)
+		ieee80211_hw_set(hw, RX_INCLUDES_FCS);
+
+	/* Tell mac80211 that RATE control is support in the vendor driver or fw */
+	if (wondertap->cap.bits.rate_adaptation)
+		ieee80211_hw_set(hw, HAS_RATE_CONTROL);
 	/*
 	 * NO_AUTO_VIF is set, so the kernel won't create a default interface.
 	 * Interfaces must now be created manually.
