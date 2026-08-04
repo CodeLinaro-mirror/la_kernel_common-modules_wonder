@@ -135,7 +135,7 @@ static int wonder_vendor_cmd_set_frequency(struct wiphy *wiphy,
 	pr_debug("SET_FREQUENCY: freq=%u MHz, bandwidth=%u\n",
 		params.freq, params.bandwidth);
 
-	return wondertap_set_freq(&wonder->wondertap_data, &params);
+	return wondertap_set_freq(wonder->wondertap_data, &params);
 }
 
 static int wonder_vendor_cmd_set_filter(struct wiphy *wiphy,
@@ -192,7 +192,7 @@ static int wonder_vendor_cmd_set_filter(struct wiphy *wiphy,
 			pr_debug("BSSID filter address: %02X:XX:XX:XX:XX:%02X\n",
 				params.bssid[0], params.bssid[5]);
 		}
-		ret = wondertap_set_bssid_filter(&wonder->wondertap_data, params.bssid);
+		ret = wondertap_set_bssid_filter(wonder->wondertap_data, params.bssid);
 		break;
 	}
 	case WONDER_VEN_ATTR_FILTER_TYPE_FRAME: {
@@ -220,7 +220,7 @@ static int wonder_vendor_cmd_set_filter(struct wiphy *wiphy,
 			pr_debug("Frame filter type=0x%04x, subtype=0x%04x\n",
 						params.frame_type, params.frame_subtype);
 		}
-		ret = wondertap_set_filter(&wonder->wondertap_data,
+		ret = wondertap_set_filter(wonder->wondertap_data,
 			WONDERTAP_FILTER_TYPE_FRAME, &params);
 		break;
 	}
@@ -352,7 +352,7 @@ static int wonder_vendor_cmd_set_fixed_tx_rate(struct wiphy *wiphy,
 		return -EINVAL;
 	}
 
-	return wondertap_set_fixed_tx_rate(&wonder->wondertap_data, &params);
+	return wondertap_set_fixed_tx_rate(wonder->wondertap_data, &params);
 }
 
 static int wonder_vendor_cmd_set_tx_rate_test(struct wiphy *wiphy,
@@ -385,7 +385,7 @@ static int wonder_vendor_cmd_set_tx_rate_test(struct wiphy *wiphy,
 	pr_debug("Apply TX rate: max_preamble=%u, max_bw=%u, max_nss=%u, max_mcs=%u\n",
 		tx_rate_params.max_preamble, tx_rate_params.max_bw, tx_rate_params.max_nss,
 		tx_rate_params.max_mcs);
-	wondertap_set_tx_rate_mask(&wonder->wondertap_data, &tx_rate_params);
+	wondertap_set_tx_rate_mask(wonder->wondertap_data, &tx_rate_params);
 
 	return 0;
 }
@@ -417,7 +417,7 @@ static int wonder_vendor_cmd_set_reg(struct wiphy *wiphy,
 
 	pr_debug("Setting regulatory country code to: %s\n", country_code);
 
-	return wondertap_set_reg(&wonder->wondertap_data, country_code);
+	return wondertap_set_reg(wonder->wondertap_data, country_code);
 }
 
 static int wonder_vendor_cmd_get_if_mac_addr(struct wiphy *wiphy,
@@ -429,7 +429,7 @@ static int wonder_vendor_cmd_get_if_mac_addr(struct wiphy *wiphy,
 	struct sk_buff *skb;
 	u8 mac_addr[ETH_ALEN];
 
-	wondertap_get_interface_mac_address(&wonder->wondertap_data, &mac_addr);
+	wondertap_get_interface_mac_address(wonder->wondertap_data, &mac_addr);
 
 	pr_debug("Handling GET_MAC. Found MAC: %02X:XX:XX:XX:XX:%02X\n",
 		mac_addr[0], mac_addr[5]);
@@ -469,7 +469,7 @@ static int wonder_vendor_cmd_get_cap(struct wiphy *wiphy,
 	u8 ch_hopping;
 	int ret;
 
-	ret = wondertap_get_capabilities(&wonder->wondertap_data, &cap);
+	ret = wondertap_get_capabilities(wonder->wondertap_data, &cap);
 
 	if (ret) {
 		pr_err("Failed to get capabilities\n");
@@ -572,13 +572,13 @@ static int wonder_vendor_cmd_set_channel_schedule_req(struct wiphy *wiphy,
 		u32 mac_tsf;
 		int ret;
 
-		wondertap_get_capabilities(&wonder->wondertap_data, &cap);
+		wondertap_get_capabilities(wonder->wondertap_data, &cap);
 		if (!cap.bits.channel_hopping) {
 			pr_err("Channel hopping not enabled in capabilities\n");
 			return -EOPNOTSUPP;
 		}
 
-		ret = wondertap_get_mac_tsf(&wonder->wondertap_data, &mac_tsf);
+		ret = wondertap_get_mac_tsf(wonder->wondertap_data, &mac_tsf);
 		if (ret) {
 			pr_err("Failed to get MAC TSF: %d\n", ret);
 			return ret;
@@ -640,7 +640,7 @@ static int wonder_vendor_cmd_set_channel_schedule_req(struct wiphy *wiphy,
 		}
 	}
 
-	wondertap_channel_schedule_request(&wonder->wondertap_data, &params);
+	wondertap_channel_schedule_request(wonder->wondertap_data, &params);
 
 	kfree(params.channel_list);
 	return 0;
@@ -659,7 +659,7 @@ static int wonder_vendor_cmd_get_mac_tsf(struct wiphy *wiphy,
 	int ret;
 
 	sys_time_before = ktime_get_boottime_ns();
-	ret = wondertap_get_mac_tsf(&wonder->wondertap_data, &mac_tsf);
+	ret = wondertap_get_mac_tsf(wonder->wondertap_data, &mac_tsf);
 	sys_time_after = ktime_get_boottime_ns();
 	if (ret)
 		return ret;
@@ -693,7 +693,7 @@ static int wonder_vendor_cmd_get_channel_status_report(struct wiphy *wiphy,
 {
 	struct ieee80211_hw *hw = wiphy_to_ieee80211_hw(wiphy);
 	struct wonder_data *wonder = hw->priv;
-	struct wondertap_data *wondertap = &wonder->wondertap_data;
+	struct wondertap_data *wondertap = wonder->wondertap_data;
 	struct wondertap_channel_status_report *report;
 	struct sk_buff *skb;
 	struct nlattr *list;
@@ -897,7 +897,7 @@ static int wonder_vendor_cmd_set_station_info(struct wiphy *wiphy,
 	pr_debug("SET_STATION_INFO: action=%u, mac=%pM, aid=%u, cap_mask=0x%x\n",
 		    action, sta_info.mac, sta_info.aid, sta_info.capability_mask);
 
-	wondertap_set_station_info(&wonder->wondertap_data, action, &sta_info);
+	wondertap_set_station_info(wonder->wondertap_data, action, &sta_info);
 	return 0;
 }
 

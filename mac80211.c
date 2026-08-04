@@ -640,41 +640,42 @@ drop:
 static int wonder_start(struct ieee80211_hw *hw)
 {
 	struct wonder_data *wonder = hw->priv;
-	struct wondertap_init_params *init_params = &wonder->wondertap_data.init_params;
-	const char *pdev_name = physical_name;
+	struct wondertap_data *wondertap = wonder->wondertap_data;
+	struct wondertap_init_params *init_params = &wondertap->init_params;
+	const char* pdev_name = physical_name;
 	int ret;
 
 	/* This should turn on the hardware and frame reception. */
-	ret = wondertap_get_capabilities(&wonder->wondertap_data, &wonder->wondertap_data.cap);
+	ret = wondertap_get_capabilities(wondertap, &wondertap->cap);
 	if (ret) {
 		pr_err("Failed to get wondertap capabilities, error: %d\n", ret);
 		return ret;
 	}
 
-	pr_debug("wondertap version: %u\n", wonder->wondertap_data.cap.version);
-	pr_debug("wondertap capabilities: 0x%X\n", wonder->wondertap_data.cap.raw_bits);
+	pr_debug("wondertap version: %u\n", wondertap->cap.version);
+	pr_debug("wondertap capabilities: 0x%X\n", wondertap->cap.raw_bits);
 
 	/* AMSDU logic */
 	init_params->amsdu_enable =
-		wonder->amsdu_enable && wonder->wondertap_data.cap.bits.amsdu_aggregation;
+		wonder->amsdu_enable && wondertap->cap.bits.amsdu_aggregation;
 	wonder->amsdu_enable = init_params->amsdu_enable;
 
 	/* Channel Hopping logic */
 	init_params->channel_hopping_enable =
-		wonder->channel_hopping_enable && wonder->wondertap_data.cap.bits.channel_hopping;
+		wonder->channel_hopping_enable && wondertap->cap.bits.channel_hopping;
 	wonder->channel_hopping_enable = init_params->channel_hopping_enable;
 
 	/* AMPDU logic */
 	init_params->ampdu_enable =
-		wonder->ampdu_enable && wonder->wondertap_data.cap.bits.ampdu_aggregation;
+		wonder->ampdu_enable && wondertap->cap.bits.ampdu_aggregation;
 	wonder->ampdu_enable = init_params->ampdu_enable;
 
 	/* Rate Adaptation logic */
 	init_params->rate_adaptation_enable =
-		wonder->ra_enable && wonder->wondertap_data.cap.bits.rate_adaptation;
+		wonder->ra_enable && wondertap->cap.bits.rate_adaptation;
 	wonder->ra_enable = init_params->rate_adaptation_enable;
 
-	ret = wondertap_init(&wonder->wondertap_data, init_params);
+	ret = wondertap_init(wondertap, init_params);
 	if (ret) {
 		pr_err("Failed to initialize wondertap0, error: %d\n", ret);
 		return ret;
@@ -713,7 +714,7 @@ static int wonder_start(struct ieee80211_hw *hw)
 	return 0;
 
 WONDER_PREPARATION_ERROR:
-	wondertap_deinit(&wonder->wondertap_data);
+	wondertap_deinit(wondertap);
 	return ret;
 }
 
@@ -723,7 +724,7 @@ static void wonder_stop(struct ieee80211_hw *hw, bool suspended)
 	/* This should turn off the hardware. */
 	wonder_rx_reset(wonder);
 	wonder_pdev_put(wonder);
-	wondertap_deinit(&wonder->wondertap_data);
+	wondertap_deinit(wonder->wondertap_data);
 }
 
 static int wonder_config(struct ieee80211_hw *hw, int radio_idx, u32 changed)
@@ -1006,7 +1007,7 @@ static void wonder_sta_update_worker(struct work_struct *work)
 	struct wonder_sta_update_work *swork =
 		container_of(work, struct wonder_sta_update_work, work);
 
-	wondertap_set_station_info(&swork->wonder->wondertap_data,
+	wondertap_set_station_info(swork->wonder->wondertap_data,
 				   swork->action, &swork->sta_info);
 	kfree(swork);
 }
@@ -1152,7 +1153,7 @@ int wonder_features_init(struct wonder_data *wonder)
 	/* Initialize Delayed Work for TX Aggregation */
 	INIT_DELAYED_WORK(&wonder->tx_work, wonder_flush_worker);
 	/* Prepare wondertap structure */
-	wondertap_prep(&wonder->wondertap_data);
+	wondertap_prep(wonder->wondertap_data);
 	return 0;
 }
 
@@ -1164,7 +1165,7 @@ void wonder_features_exit(struct wonder_data *wonder)
 	pr_debug("Wonder Virtual Soft-MAC Driver unloaded successfully.\n");
 }
 
-void *wonder_mac80211_init(struct device *dev)
+void *wonder_mac80211_init(struct device *dev, struct wondertap_data *wondertap)
 {
 	struct ieee80211_hw *hw;
 	struct wonder_data *wonder = NULL;
@@ -1184,6 +1185,7 @@ void *wonder_mac80211_init(struct device *dev)
 	wonder->pdev = NULL;
 	wonder->data_version = WONDER_DATA_80211_RADIOTAP;
 	wonder->iftype = NL80211_IFTYPE_MONITOR;
+	wonder->wondertap_data = wondertap;
 	wonder->config_filters = 0;
 
 	wonder->ampdu_enable = false;
