@@ -85,9 +85,9 @@ int wondertap_init(struct wondertap_data *wondertap, const struct wondertap_init
 	params.rate_adaptation_enable = _params->rate_adaptation_enable;
 	if (_params->rate_adaptation_enable) {
 		params.tx_rate_mask.max_preamble = wondertap->cached_tx_rate.preamble;
-		params.tx_rate_mask.max_bw = WONDERTAP_RA_MAX_BW;
-		params.tx_rate_mask.max_nss = WONDERTAP_RA_MAX_NSS;
-		params.tx_rate_mask.max_mcs = WONDERTAP_RA_MAX_MCS;
+		params.tx_rate_mask.max_bw = wondertap->cached_tx_rate.bw;
+		params.tx_rate_mask.max_nss = wondertap->cached_tx_rate.nss;
+		params.tx_rate_mask.max_mcs = wondertap->cached_tx_rate.mcs;
 	}
 
 	params.channel_hopping_enable = _params->channel_hopping_enable;
