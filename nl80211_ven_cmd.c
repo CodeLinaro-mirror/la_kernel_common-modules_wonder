@@ -572,7 +572,11 @@ static int wonder_vendor_cmd_set_channel_schedule_req(struct wiphy *wiphy,
 		u32 mac_tsf;
 		int ret;
 
-		wondertap_get_capabilities(wonder->wondertap_data, &cap);
+		ret = wondertap_get_capabilities(wonder->wondertap_data, &cap);
+		if (ret) {
+			pr_err("Failed to get capabilities: %d\n", ret);
+			return ret;
+		}
 		if (!cap.bits.channel_hopping) {
 			pr_err("Channel hopping not enabled in capabilities\n");
 			return -EOPNOTSUPP;

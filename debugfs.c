@@ -13,6 +13,7 @@
 #include <linux/etherdevice.h>
 #include <linux/seq_file.h>
 #include <linux/hex.h>
+#include <linux/if_ether.h>
 
 #include "core.h"
 #include "mac80211.h"
@@ -378,7 +379,8 @@ static ssize_t wonder_station_query_write(struct file *file, const char __user *
 	struct seq_file *m = file->private_data;
 	struct wonder_data *wonder = m->private;
 	struct wondertap_data *wondertap = wonder->wondertap_data;
-	char buf[20];
+	char *mac_str;
+	char buf[32];
 	size_t len;
 
 	len = min(count, sizeof(buf) - 1);
@@ -386,8 +388,10 @@ static ssize_t wonder_station_query_write(struct file *file, const char __user *
 		return -EFAULT;
 	buf[len] = '\0';
 
+	mac_str = strim(buf);
+
 	mutex_lock(&wondertap->lock);
-	if (!mac_pton(buf, wondertap->query_mac_addr)) {
+	if (!mac_pton(mac_str, wondertap->query_mac_addr) || mac_str[MAC_ADDR_STR_LEN] != '\0') {
 		pr_err("Invalid MAC address format. Expected xx:xx:xx:xx:xx:xx\n");
 		mutex_unlock(&wondertap->lock);
 		return -EINVAL;
@@ -396,6 +400,7 @@ static ssize_t wonder_station_query_write(struct file *file, const char __user *
 
 	return count;
 }
+
 
 static int wonder_station_query_open(struct inode *inode, struct file *file)
 {
