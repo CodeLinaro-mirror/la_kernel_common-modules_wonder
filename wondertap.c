@@ -348,10 +348,12 @@ int wondertap_channel_schedule_request(struct wondertap_data *wondertap,
 	struct channel_schedule_request *cached_schedule = &wondertap->cached_channel_schedule;
 	int i;
 	int ret = 0;
-	size_t list_size = request->channel_list_len *
-			sizeof(struct wondertap_channel_list_params);
+	size_t list_size;
 
 	mutex_lock(&wondertap->lock);
+
+	list_size = request->channel_list_len *
+			sizeof(struct wondertap_channel_list_params);
 
 	if (cached_schedule->channel_list_len != request->channel_list_len) {
 		kfree(cached_schedule->channel_list);
