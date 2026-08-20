@@ -7,6 +7,7 @@
  * translates standard mac80211 calls into proprietary vendor driver functions.
  */
 #define pr_fmt(fmt) "[wonder][mac80211] " fmt
+
 #define LOG_MODULE_NAME "mac80211"
 
 #include <linux/netdevice.h>
@@ -16,7 +17,9 @@
 #include <linux/slab.h>
 #include <linux/compiler.h>
 #include <linux/version.h>
+#include <linux/limits.h>
 
+#include "wondertap.h"
 #include "core.h"
 #include "mac80211.h"
 #include "mac80211_txs.h"
@@ -75,21 +78,24 @@ static rx_handler_result_t wonder_rx_80211_frame(struct wonder_data *wonder, str
 {
 	struct ieee80211_hdr *hdr;
 	struct ieee80211_radiotap_header *radhdr;
+	struct net_device *vdev = NULL;
 
 	if (!wonder || !wonder->vdev) {
 		pr_err("RX received but interface not active. Dropping.\n");
 		goto drop;
 	}
 
+	vdev = wonder->vdev;
 	/* --- Packet Filtering & Validation (mac80211/Wonder Driver responsibility) --- */
 	if (skb->len < 24) { /* Basic check for 802.11 header length */
 		pr_err("Dropping short RX frame.\n");
+		vdev->stats.rx_length_errors++;
 		goto drop;
 	}
 
 	/* Filtering */
 	radhdr = (struct ieee80211_radiotap_header *)skb->data;
-	hdr = (struct ieee80211_hdr *)(skb->data + radhdr->it_len);
+	hdr = (struct ieee80211_hdr *)(skb->data + le16_to_cpu(radhdr->it_len));
 
 	if (IS_ENABLED(CONFIG_ANDROID_WONDER_RX_DEBUG)) {
 		pr_err("%s(): receiv packet from %s, send to mac80211, skb->protocol: %x, radhdr_len: %d\n",
@@ -99,12 +105,20 @@ static rx_handler_result_t wonder_rx_80211_frame(struct wonder_data *wonder, str
 	}
 
 	if (!wonder_80211_filter(hdr)) {
+		vdev->stats.rx_dropped++;
 		if (IS_ENABLED(CONFIG_ANDROID_WONDER_RX_DEBUG))
 			pr_err("Dropping frame with frame control: %x.\n", hdr->frame_control);
 		goto drop;
 	}
 	/* Populate necessary metadata for mac80211 */
 	skb->dev = wonder->vdev;
+
+	if (wonder->data_version == WONDER_DATA_80211 ||
+		wonder->data_version == WONDER_DATA_80211_RADIOTAP) {
+		dev_sw_netstats_rx_add(vdev, skb->len);
+		vdev->stats.rx_packets++;
+		vdev->stats.rx_bytes += skb->len;
+	}
 	/* Pass the raw 802.11 frame into the mac80211 processing pipeline. */
 	/* mac80211 now handles de-AMSDU, 802.11 -> 802.3 conversion, and netif_rx(). */
 	switch (wonder->data_version) {
@@ -115,23 +129,17 @@ static rx_handler_result_t wonder_rx_80211_frame(struct wonder_data *wonder, str
 		netif_receive_skb(skb);
 		break;
 	default:
+		vdev->stats.rx_dropped++;
 		pr_err("Dropping Not supported data_version %d.\n", wonder->data_version);
 		goto drop;
 	}
 	return RX_HANDLER_CONSUMED;
 drop:
 	/* Drop Frames */
+	if (vdev) {
+		dev_core_stats_rx_dropped_inc(vdev);
+	}
 	kfree_skb(skb);
-	return RX_HANDLER_CONSUMED;
-}
-
-static rx_handler_result_t wonder_rx_8023_frame(struct wonder_data *wonder, struct sk_buff *skb)
-{
-	/* Change the skb's dev pointer to the virtual device */
-	if (wonder->vdev)
-		skb->dev = wonder->vdev;
-	netif_rx(skb);
-
 	return RX_HANDLER_CONSUMED;
 }
 
@@ -146,13 +154,7 @@ static rx_handler_result_t wonder_rx_monitor_handler(struct wonder_data *wonder,
 	 *    skb_reset_mac_header(skb);
 	 *    skb->protocol = htons(ETH_P_802_2);
 	 */
-	/* LLC */
-	if (skb->protocol == htons(ETH_P_802_2))
-		return wonder_rx_80211_frame(wonder, skb);
-	else if (0 && skb->protocol == htons(ETH_P_802_3))
-		return wonder_rx_8023_frame(wonder, skb);
-
-	return RX_HANDLER_PASS;
+	return wonder_rx_80211_frame(wonder, skb);
 }
 
 static bool wonder_80211_common_filter(struct wonder_data *wonder,
@@ -371,13 +373,10 @@ static void syna_rx_handler(struct wonder_data *wonder, struct sk_buff *skb)
 
 	if (ieee80211_is_data(hdr->frame_control)) {
 		/* TODO: Workaround to remove 4 byte tailer for syna in legacy data frame. */
-		if (!ieee80211_is_data_qos(hdr->frame_control)) {
-			skb->len -= 4;
-		} else {
+		if (ieee80211_is_data_qos(hdr->frame_control)) {
 			/* TODO: Workaround to remove 2 byte tailer for syna in QoS AMSDU frame. */
 			qos = ieee80211_get_qos_ctl((struct ieee80211_hdr *)hdr);
 			if (qos[0] & IEEE80211_QOS_CTL_A_MSDU_PRESENT) {
-				pr_debug("%s(): %d, RX amsdu\n", __func__, __LINE__);
 				skb->len -= 2;
 			}
 		}
@@ -432,7 +431,7 @@ static rx_handler_result_t wonder_rx_adhoc_handler(struct wonder_data *wonder,
 		skb->pkt_type = PACKET_HOST;
 
 	/* Vendor specific RX handler */
-	if (IS_ENABLED(CONFIG_ANDROID_WONDER_SYNA_SUPPORT))
+	if (wonder->syna_support_enable)
 		syna_rx_handler(wonder, skb);
 
 	/* Fill RX status for mac80211 operation */
@@ -489,10 +488,8 @@ static rx_handler_result_t wonder_rx_handler(struct sk_buff **pskb)
 	return RX_HANDLER_PASS;
 }
 
-static int wonder_rx_setup(struct wonder_data *wonder)
+static int wonder_sanity_check(struct wonder_data *wonder)
 {
-	int ret;
-
 	if (!wonder->pdev)
 		return -ENODEV;
 
@@ -505,6 +502,22 @@ static int wonder_rx_setup(struct wonder_data *wonder)
 		pr_err("Failed to get virtual device %s\n", VDEV_NAME);
 		return -ENODEV;
 	}
+
+	return 0;
+}
+
+static int wonder_tx_setup(struct wonder_data *wonder)
+{
+	struct net_device *dev =wonder->vdev;
+
+	dev_set_mtu(dev, dev->max_mtu ? 1500 : INT_MAX);
+	return 0;
+}
+
+static int wonder_rx_setup(struct wonder_data *wonder)
+{
+	int ret;
+
 	/*
 	 * Since we are decoupling, we register our RX injection point with the
 	 * vendor here.
@@ -536,27 +549,33 @@ static void wonder_tx(struct ieee80211_hw *hw,
 {
 	struct wonder_data *wonder = hw->priv;
 	struct net_device *pdev = wonder->pdev;
+	struct net_device *vdev = wonder->vdev;
 	struct ieee80211_radiotap_header *radhdr;
 	struct ieee80211_hdr *hdr;
 	struct wonder_txd *txd;
 	unsigned int room = skb_headroom(skb);
 
-	if (!pdev) {
-		dev_kfree_skb(skb);
+	if (unlikely(!pdev) || unlikely(!vdev)) {
 		pr_err("Physical device is not exist, dropping packet.\n");
-		return;
+		goto drop;
 	}
 
 	if (room < WONDER_TX_ROOM) {
-		dev_kfree_skb(skb);
+		vdev->stats.tx_errors++;
 		pr_err("Not enough headroom, dropping packet.\n");
-		return;
+		goto drop;
 	}
 
 	if (IS_ENABLED(CONFIG_ANDROID_WONDER_TX_DEBUG)) {
 		pr_err("Forward packet to pdev %s, len %d\n", pdev->name, skb->len);
-		print_hex_dump(KERN_DEBUG, "wonder_tx: ", DUMP_PREFIX_NONE, 16, 1,
+		print_hex_dump(KERN_DEBUG, __func__, DUMP_PREFIX_NONE, 16, 1,
 			       skb->data, skb->len, false);
+	}
+
+	if (unlikely(skb->len < sizeof(struct ieee80211_hdr))) {
+		vdev->stats.tx_errors++;
+		pr_err("TX packet too short, dropping packet.\n");
+		goto drop;
 	}
 
 	hdr = (struct ieee80211_hdr *)skb->data;
@@ -573,15 +592,20 @@ static void wonder_tx(struct ieee80211_hw *hw,
 	/* Assign wonder txd */
 	txd->frame_type = le16_to_cpu(hdr->frame_control) & IEEE80211_FCTL_FTYPE;
 	txd->is_unicast = !is_multicast_ether_addr(hdr->addr1);
-	txd->tid = ieee80211_get_tid(hdr);
+
+	if (ieee80211_is_data_qos(hdr->frame_control)) {
+		u8 tid = ieee80211_get_tid(hdr);
+		/* Ensure that tainted values are properly sanitized */
+		txd->tid = (tid <= 0xf) ? tid : 0;
+	} else {
+		txd->tid = 0;
+	}
 	skb_pull(skb, sizeof(struct wonder_txd));
 	/* The monitor mode request non-zero length of radiotap. */
 	radhdr = (struct ieee80211_radiotap_header *)skb->data;
-	if (radhdr->it_len == 0) {
-		radhdr->it_version = 0;
-		radhdr->it_pad = 0;
-		radhdr->it_len = sizeof(struct ieee80211_radiotap_header) + 1;
-	}
+	radhdr->it_version = 0;
+	radhdr->it_pad = 0;
+	radhdr->it_len = cpu_to_le16(sizeof(struct ieee80211_radiotap_header) + 1);
 	/* Assign the skb to the physical device for transmission */
 	skb->dev = pdev;
 	/* Report Fake TX status to adjust Rate and AMSDU length */
@@ -590,36 +614,53 @@ static void wonder_tx(struct ieee80211_hw *hw,
 	else
 		wonder_txs_enqueue(control->sta, skb);
 
-	if (!netif_running(pdev) || !netif_device_present(pdev)) {
-		dev_kfree_skb_any(skb);
+	if (unlikely(!netif_running(pdev) || !netif_device_present(pdev))) {
+		vdev->stats.tx_dropped++;
+		goto drop;
 	} else {
+		dev_sw_netstats_tx_add(vdev, 1, skb->len);
+		vdev->stats.tx_packets++;
+		vdev->stats.tx_bytes += skb->len;
 		/* Call the physical device's transmit handler */
 		dev_queue_xmit(skb);
 	}
+	return;
+drop:
+	if (vdev)
+		dev_core_stats_tx_dropped_inc(vdev);
+	dev_kfree_skb_any(skb);
 }
 
 static int wonder_start(struct ieee80211_hw *hw)
 {
 	struct wonder_data *wonder = hw->priv;
+	struct wondertap_init_params *init_params = &wonder->wondertap_data.init_params;
 	const char *pdev_name = physical_name;
-	struct wondertap_init_params wondertap_init_params;
-	struct wondertap_capability wondertap_capabilities;
 	int ret;
 
 	/* This should turn on the hardware and frame reception. */
-	ret = wondertap_get_capabilities(&wonder->wondertap_data, &wondertap_capabilities);
+	ret = wondertap_get_capabilities(&wonder->wondertap_data, &wonder->wondertap_data.cap);
 	if (ret) {
 		pr_err("Failed to get wondertap capabilities, error: %d\n", ret);
 		return ret;
 	}
 
-	pr_debug("wondertap version: %u\n", wondertap_capabilities.version);
-	pr_debug("wondertap capabilities: 0x%X\n", wondertap_capabilities.raw_bits);
+	pr_debug("wondertap version: %u\n", wonder->wondertap_data.cap.version);
+	pr_debug("wondertap capabilities: 0x%X\n", wonder->wondertap_data.cap.raw_bits);
+	init_params->ampdu_enable = wonder->wondertap_data.cap.bits.ampdu_aggregation;
+	init_params->rate_adaptation_enable =
+		wonder->wondertap_data.cap.bits.rate_adaptation;
 
-	wondertap_init_params.ampdu_enable = wondertap_capabilities.bits.ampdu_aggregation;
-	wondertap_init_params.amsdu_enable = wondertap_capabilities.bits.amsdu_aggregation;
-	wondertap_init_params.rate_adaptation_enable = wondertap_capabilities.bits.rate_adaptation;
-	ret = wondertap_init(&wonder->wondertap_data, &wondertap_init_params);
+	/* Fall back to hardware capabilities if not explicitly set by upper layer */
+	init_params->amsdu_enable =
+		(wonder->wondertap_data.cache_flags & WONDERTAP_CACHE_AMSDU_SET) ?
+		wonder->amsdu_enable : wonder->wondertap_data.cap.bits.amsdu_aggregation;
+
+	init_params->channel_hopping_enable =
+		(wonder->wondertap_data.cache_flags & WONDERTAP_CACHE_CHANNEL_HOPPING_SET) ?
+		wonder->channel_hopping_enable : wonder->wondertap_data.cap.bits.channel_hopping;
+
+	ret = wondertap_init(&wonder->wondertap_data, init_params);
 	if (ret) {
 		pr_err("Failed to initialize wondertap0, error: %d\n", ret);
 		return ret;
@@ -633,12 +674,33 @@ static int wonder_start(struct ieee80211_hw *hw)
 	ret = wonder_pdev_get(wonder, pdev_name);
 	if (ret) {
 		pr_err("Failed to get physical device %s\n", pdev_name);
-		wondertap_deinit(&wonder->wondertap_data);
-		return ret;
+		goto WONDER_PREPARATION_ERROR;
+	}
+
+	ret = wonder_sanity_check(wonder);
+	if (ret) {
+		pr_err("sanity_check failed (%d)\n", ret);
+		goto WONDER_PREPARATION_ERROR;
+	}
+
+	ret = wonder_tx_setup(wonder);
+	if (ret) {
+		pr_err("tx_setup failed (%d)\n", ret);
+		goto WONDER_PREPARATION_ERROR;
 	}
 
 	/* turn on frame reception */
-	return wonder_rx_setup(wonder);
+	ret = wonder_rx_setup(wonder);
+	if (ret) {
+		pr_err("rx_setup failed (%d)\n", ret);
+		goto WONDER_PREPARATION_ERROR;
+	}
+
+	return 0;
+
+WONDER_PREPARATION_ERROR:
+	wondertap_deinit(&wonder->wondertap_data);
+	return ret;
 }
 
 static void wonder_stop(struct ieee80211_hw *hw, bool suspended)
@@ -675,9 +737,38 @@ static void wonder_configure_filter(struct ieee80211_hw *hw,
 }
 
 static void wonder_handle_tx_queue(struct ieee80211_hw *hw,
-								struct ieee80211_txq *txq)
+								int ac)
 {
-	ieee80211_handle_wake_tx_queue(hw, txq);
+	struct ieee80211_txq *queue = NULL;
+	struct sk_buff *skb;
+	struct ieee80211_tx_control control;
+
+	ieee80211_txq_schedule_start(hw, ac);
+	while ((queue = ieee80211_next_txq(hw, ac))) {
+		memset(&control, 0, sizeof(control));
+		control.sta = queue->sta;
+		while (1) {
+			skb = ieee80211_tx_dequeue(hw, queue);
+			if (!skb)
+				break;
+
+			wonder_tx(hw, &control, skb);
+		}
+		ieee80211_return_txq(hw, queue, false);
+	}
+	ieee80211_txq_schedule_end(hw, ac);
+	return;
+}
+
+static void wonder_flush_worker(struct work_struct *work)
+{
+	struct wonder_data *wonder = container_of(work, struct wonder_data, tx_work.work);
+	struct ieee80211_hw *hw = wonder->hw;
+	int ac;
+
+	/* Flush all AC queues */
+	for (ac = 0; ac < NL80211_NUM_ACS; ac++)
+		wonder_handle_tx_queue(hw, ac);
 }
 
 static void wonder_wake_tx_queue(struct ieee80211_hw *hw,
@@ -694,11 +785,23 @@ static void wonder_wake_tx_queue(struct ieee80211_hw *hw,
 	/* Get tx_queue length */
 	ieee80211_txq_get_depth(txq, &frame_count, &byte_count);
 	/* frame_count and byte_count */
-	pr_debug("%s(): Waking up TXQ for AC %d, mac80211 has %lu frames (%lu bytes) pending\n",
-			__func__, txq->ac, frame_count, byte_count);
-	/* Airtime fairness support. */
-	if (!wonder->tx_stop)
-		wonder_handle_tx_queue(hw, txq);
+	if (IS_ENABLED(CONFIG_ANDROID_WONDER_TX_DEBUG)) {
+		pr_debug(
+		"Waking up TXQ for AC %d, mac80211 has %lu frames (%lu bytes) pending\n",
+		txq->ac, frame_count, byte_count);
+	}
+	/* Aggregation Logic: Wait for more packets if size is small */
+	if (wonder->amsdu_enable) {
+		if (byte_count > wonder->amsdu_threshold) {
+			queue_delayed_work(wonder->workqueue, &wonder->tx_work, 0);
+		} else {
+			/* Schedule flush to prevent packets stuck */
+			queue_delayed_work(wonder->workqueue, &wonder->tx_work,
+					 usecs_to_jiffies(wonder->amsdu_delay));
+		}
+	} else {
+		wonder_handle_tx_queue(hw, txq->ac);
+	}
 }
 
 static void wonder_channel_switch(struct ieee80211_hw *hw,
@@ -793,8 +896,8 @@ static int wonder_add_interface(struct ieee80211_hw *hw,
 	wonder->vif = vif;
 	wonder->iftype = wdev->iftype;
 	wonder->vdev = vdev;
-	pr_debug("Added virtual interface %s (Type: %d), name %s\n",
-			wiphy_name(hw->wiphy), vif->type, vdev->name);
+	pr_debug("Added virtual interface %s (Type: %d), name %s, mtu %d\n",
+			wiphy_name(hw->wiphy), vif->type, vdev->name, vdev->mtu);
 	/* Configure mac address to phyiscal interface address */
 	return wonder_force_set_mac(wonder, vif);
 }
@@ -816,10 +919,139 @@ static bool wonder_amsdu_sanity(struct ieee80211_hw *hw,
 					     struct sk_buff *head,
 					     struct sk_buff *skb)
 {
-	pr_debug("TX AMSDU sanity check.\n");
+	if (IS_ENABLED(CONFIG_ANDROID_WONDER_TX_DEBUG))
+		pr_debug("TX AMSDU sanity check.\n");
 	return true;
 }
 
+static int wonder_ampdu_action(struct ieee80211_hw *hw,
+			    struct ieee80211_vif *vif,
+			    struct ieee80211_ampdu_params *params)
+{
+	struct wonder_data *wonder = hw->priv;
+
+	if (!wonder->ampdu_enable)
+		return -EOPNOTSUPP;
+
+	switch (params->action) {
+	case IEEE80211_AMPDU_TX_START:
+		pr_debug("AMPDU TX START: sta=%pM, tid=%d, buf_size=%d, ssn=%d\n",
+			    params->sta->addr, params->tid, params->buf_size, params->ssn);
+		/*
+		 * TODO: Notify Vendor Driver
+		 * Prepare a TX Queue. The maximum number of aggregated packets must not exceed
+		 * params->buf_size. From now on, packets for this TID entering wonder_tx()
+		 * can be encapsulated into A-MPDU.
+		 */
+		ieee80211_start_tx_ba_cb_irqsafe(vif, params->sta->addr, params->tid);
+		break;
+	case IEEE80211_AMPDU_TX_STOP_CONT:
+	case IEEE80211_AMPDU_TX_STOP_FLUSH:
+	case IEEE80211_AMPDU_TX_STOP_FLUSH_CONT:
+		ieee80211_stop_tx_ba_cb_irqsafe(vif, params->sta->addr, params->tid);
+		pr_debug("AMPDU TX STOP: sta=%pM, tid=%d, action=%d\n",
+			    params->sta->addr, params->tid, params->action);
+		break;
+	case IEEE80211_AMPDU_RX_START:
+		pr_debug("AMPDU RX START: sta=%pM, tid=%d, buf_size=%d, ssn=%d\n",
+			    params->sta->addr, params->tid, params->buf_size, params->ssn);
+		/*
+		 * TODO: Notify Vendor Driver
+		 * Prepare to receive the peer's A-MPDU and start de-aggregation.
+		 * Feed the de-aggregated single MPDUs directly to mac80211, which will handle
+		 * software reordering.
+		 */
+		break;
+	case IEEE80211_AMPDU_RX_STOP:
+		pr_debug("AMPDU RX STOP: sta=%pM, tid=%d\n",
+			    params->sta->addr, params->tid);
+		break;
+	case IEEE80211_AMPDU_TX_OPERATIONAL:
+		pr_debug("AMPDU RX STOP: sta=%pM, tid=%d\n",
+			    params->sta->addr, params->tid);
+		break;
+	default:
+		pr_err("Unknown AMPDU action %d\n", params->action);
+		break;
+	}
+
+	return 0;
+}
+
+static void wonder_sta_update_worker(struct work_struct *work)
+{
+	struct wonder_sta_update_work *swork =
+		container_of(work, struct wonder_sta_update_work, work);
+
+	wondertap_set_station_info(&swork->wonder->wondertap_data,
+				   swork->action, &swork->sta_info);
+	kfree(swork);
+}
+
+static int wonder_update_station_state(struct ieee80211_hw *hw,
+			struct ieee80211_sta *sta,
+			enum wondertap_station_action action)
+{
+	struct wonder_sta_update_work *swork;
+	struct ieee80211_link_sta *link_sta = &sta->deflink;
+	struct wonder_data *wonder = hw->priv;
+	struct wondertap_station_info *sta_info;
+
+	swork = kzalloc(sizeof(*swork), GFP_ATOMIC);
+	if (!swork)
+		return -ENOMEM;
+
+	INIT_WORK(&swork->work, wonder_sta_update_worker);
+	swork->wonder = wonder;
+	swork->action = action;
+	sta_info = &swork->sta_info;
+	sta_info->aid = sta->aid;
+	memcpy(sta_info->mac, sta->addr, ETH_ALEN);
+
+	if (link_sta->ht_cap.ht_supported) {
+		sta_info->ht_capa.cap_info = link_sta->ht_cap.cap;
+		sta_info->ht_capa.ampdu_params_info = 0x1f;
+		sta_info->ht_capa.mcs = link_sta->ht_cap.mcs;
+		sta_info->capability_mask |= BIT(WONDERTAP_STATION_CAP_HT);
+	}
+
+	if (link_sta->vht_cap.vht_supported) {
+		sta_info->vht_capa.vht_cap_info = link_sta->vht_cap.cap;
+		sta_info->vht_capa.supp_mcs = link_sta->vht_cap.vht_mcs;
+		sta_info->capability_mask |= BIT(WONDERTAP_STATION_CAP_VHT);
+	}
+
+	if (link_sta->he_cap.has_he) {
+		sta_info->he_capa = link_sta->he_cap.he_cap_elem;
+		sta_info->he_capa_len = sizeof(link_sta->he_cap.he_cap_elem);
+		sta_info->capability_mask |= BIT(WONDERTAP_STATION_CAP_HE);
+	}
+
+	queue_work(wonder->workqueue, &swork->work);
+	return 0;
+}
+
+static int wonder_sta_add(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
+			struct ieee80211_sta *sta)
+{
+	wonder_update_station_state(hw, sta, WONDERTAP_STATION_STATE_NEW);
+	return 0;
+}
+
+static void wonder_sta_rc_update(struct ieee80211_hw *hw,
+			      struct ieee80211_vif *vif,
+			      struct ieee80211_sta *sta,
+			      u32 changed)
+{
+	wonder_update_station_state(hw, sta, WONDERTAP_STATION_STATE_UPDATE);
+}
+
+static int wonder_sta_remove(struct ieee80211_hw *hw, struct ieee80211_vif *vif,
+			struct ieee80211_sta *sta)
+{
+	wonder_update_station_state(hw, sta, WONDERTAP_STATION_STATE_DEL);
+	return 0;
+}
 
 static void wonder_sta_rate_tbl_update(struct ieee80211_hw *hw,
 				struct ieee80211_vif *vif,
@@ -834,9 +1066,6 @@ static void wonder_sta_rate_tbl_update(struct ieee80211_hw *hw,
 	for (i = 0; i < ARRAY_SIZE(sta_rates->rate); i++) {
 		if (sta_rates->rate[i].idx < 0 || !sta_rates->rate[i].count)
 			break;
-		pr_debug("%s(): i %d, idx %x, count %d, flags %x\n",
-			__func__, i, sta_rates->rate[i].idx, sta_rates->rate[i].count,
-			sta_rates->rate[i].flags);
 	}
 }
 
@@ -869,7 +1098,11 @@ static const struct ieee80211_ops wonder_mac80211_ops = {
 	.change_chanctx     = ieee80211_emulate_change_chanctx,
 	/* --- AMSDU Support -- */
 	.can_aggregate_in_amsdu = wonder_amsdu_sanity,
+	.ampdu_action = wonder_ampdu_action,
 	/* --- Station Support --- */
+	.sta_add = wonder_sta_add,
+	.sta_remove = wonder_sta_remove,
+	.sta_rc_update = wonder_sta_rc_update,
 	.sta_rate_tbl_update = wonder_sta_rate_tbl_update,
 	/* -- ADHOC Support -- */
 	.tx_last_beacon = wonder_tx_last_beacon,
@@ -892,6 +1125,8 @@ int wonder_features_init(struct wonder_data *wonder)
 	wonder_get_regulator_domain(hw);
 	/* Initial tx status queue */
 	wonder_txs_queue_init();
+	/* Initialize Delayed Work for TX Aggregation */
+	INIT_DELAYED_WORK(&wonder->tx_work, wonder_flush_worker);
 	/* Prepare wondertap structure */
 	wondertap_prep(&wonder->wondertap_data);
 	return 0;
@@ -899,6 +1134,7 @@ int wonder_features_init(struct wonder_data *wonder)
 
 void wonder_features_exit(struct wonder_data *wonder)
 {
+	cancel_delayed_work_sync(&wonder->tx_work);
 	wonder_txs_queue_exit();
 	ieee80211_unregister_hw(wonder->hw);
 	pr_debug("Wonder Virtual Soft-MAC Driver unloaded successfully.\n");
@@ -925,7 +1161,19 @@ void *wonder_mac80211_init(void)
 	wonder->data_version = WONDER_DATA_80211_RADIOTAP;
 	wonder->iftype = NL80211_IFTYPE_MONITOR;
 	wonder->config_filters = 0;
-	wonder->tx_stop = false;
+
+	wonder->ampdu_enable = false;
+	wonder->amsdu_enable = false;
+	wonder->channel_hopping_enable = false;
+	wonder->amsdu_threshold = 8000;
+	wonder->amsdu_delay = 3000;
+	wonder->workqueue = create_singlethread_workqueue(DRV_NAME);
+	if (!wonder->workqueue) {
+		pr_err("Failed to create workqueue\n");
+		ieee80211_free_hw(hw);
+		return NULL;
+	}
+	wonder->syna_support_enable = false;
 	/* Set Band Capabilities */
 	hw->wiphy->bands[NL80211_BAND_2GHZ] = &wonder_band_2ghz;
 	hw->wiphy->bands[NL80211_BAND_5GHZ] = &wonder_band_5ghz;
@@ -944,6 +1192,8 @@ void *wonder_mac80211_init(void)
 	/* Support AMSDU */
 	ieee80211_hw_set(hw, TX_AMSDU);
 	ieee80211_hw_set(hw, SUPPORT_FAST_XMIT);
+	/* Support AMPDU */
+	ieee80211_hw_set(hw, AMPDU_AGGREGATION);
 	/*
 	 * NO_AUTO_VIF is set, so the kernel won't create a default interface.
 	 * Interfaces must now be created manually.
@@ -973,6 +1223,7 @@ void *wonder_mac80211_init(void)
 	ret = wonder_features_init(wonder);
 	if (ret) {
 		pr_err("Failed to register mac80211 hardware. Ret: %d\n", ret);
+		destroy_workqueue(wonder->workqueue);
 		ieee80211_free_hw(hw);
 		return NULL;
 	}
@@ -988,5 +1239,6 @@ void wonder_mac80211_exit(struct wonder_data *wonder)
 
 	wonder_ssr_exit(wonder);
 	wonder_features_exit(wonder);
+	destroy_workqueue(wonder->workqueue);
 	ieee80211_free_hw(wonder->hw);
 }
