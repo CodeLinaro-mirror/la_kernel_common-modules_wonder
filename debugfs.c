@@ -415,6 +415,41 @@ static const struct file_operations wonder_station_query_fops = {
 	.release = single_release,
 };
 
+static int wonder_station_table_show(struct seq_file *m, void *v)
+{
+	struct wonder_data *wonder = m->private;
+	struct wondertap_data *wondertap = wonder->wondertap_data;
+	int i, count = 0;
+
+	mutex_lock(&wondertap->lock);
+	seq_puts(m, "--- Wondertap Station Table ---\n");
+	for (i = 0; i < WONDERTAP_MAX_STATION_TABLE_SIZE; i++) {
+		if (wondertap->station_table[i].in_use) {
+			struct wondertap_station_info *info =
+				&wondertap->station_table[i].info;
+			u32 cap = info->capability_mask;
+			bool ht = cap & BIT(WONDERTAP_STATION_CAP_HT);
+			bool vht = cap & BIT(WONDERTAP_STATION_CAP_VHT);
+			bool he = cap & BIT(WONDERTAP_STATION_CAP_HE);
+			bool he_6g = cap & BIT(WONDERTAP_STATION_CAP_HE_6G);
+
+			count++;
+			seq_printf(m, "[%2d] MAC: %pM | AID: %u | Cap: 0x%08x (HT:%s VHT:%s HE:%s HE_6G:%s)\n",
+				   i, info->mac, info->aid, cap,
+				   ht ? "Y" : "N", vht ? "Y" : "N",
+				   he ? "Y" : "N", he_6g ? "Y" : "N");
+		}
+	}
+	if (count == 0)
+		seq_puts(m, "(No active stations)\n");
+	seq_printf(m, "Total active stations: %d\n", count);
+	mutex_unlock(&wondertap->lock);
+
+	return 0;
+}
+
+DEFINE_SHOW_ATTRIBUTE(wonder_station_table);
+
 static const char *wonder_ver_to_str(enum wondertap_ver ver)
 {
 	switch (ver) {
@@ -515,6 +550,8 @@ int wonder_debugfs_init(struct wonder_data *wonder)
 			    wonder, &wonder_channel_schedule_request_fops);
 	debugfs_create_file("station_query", 0644, wonder_debugfs_root,
 			    wonder, &wonder_station_query_fops);
+	debugfs_create_file("station_table", 0444, wonder_debugfs_root,
+			    wonder, &wonder_station_table_fops);
 	debugfs_create_file("version", 0444, wonder_debugfs_root,
 			    wonder, &wonder_version_fops);
 	debugfs_create_file("stats", 0644, wonder_debugfs_root,
