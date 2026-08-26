@@ -159,8 +159,29 @@ out:
 void wondertap_deinit(struct wondertap_data *wondertap)
 {
 	struct wondertap_deinit_params params;
+	int i;
 
 	mutex_lock(&wondertap->lock);
+
+	/* Auto-flush active stations on interface deinit / shutdown */
+	if (wondertap->wonder_ops && wondertap->wonder_ops->set_station_info) {
+		for (i = 0; i < WONDERTAP_MAX_STATION_TABLE_SIZE; i++) {
+			if (wondertap->station_table[i].in_use) {
+				struct wondertap_station_info *info =
+					&wondertap->station_table[i].info;
+
+				pr_debug("%s: Auto-flushing station slot %d MAC %pM AID %u\n",
+					__func__, i, info->mac, info->aid);
+				wondertap->wonder_ops->set_station_info(
+					wondertap->vendor_handle,
+					WONDERTAP_STATION_STATE_DEL,
+					info);
+				wondertap->station_table[i].in_use = false;
+				memset(info, 0, sizeof(*info));
+			}
+		}
+	}
+
 	if (wondertap->wonder_ops && wondertap->wonder_ops->deinit) {
 		memset(&params, 0, sizeof(params));
 		memcpy(params.country_code, wondertap->cached_country_code,
@@ -467,6 +488,7 @@ int wondertap_set_station_info(struct wondertap_data *wondertap,
 		struct wondertap_station_info *info)
 {
 	int ret = 0;
+	int i, free_slot = -1;
 
 	mutex_lock(&wondertap->lock);
 
@@ -484,6 +506,48 @@ int wondertap_set_station_info(struct wondertap_data *wondertap,
 
 	ret = wondertap->wonder_ops->set_station_info(
 		wondertap->vendor_handle, action, info);
+
+	if (ret == 0 && info) {
+		if (action == WONDERTAP_STATION_STATE_NEW) {
+			for (i = 0; i < WONDERTAP_MAX_STATION_TABLE_SIZE; i++) {
+				if (wondertap->station_table[i].in_use &&
+				    ether_addr_equal(wondertap->station_table[i].info.mac,
+						     info->mac)) {
+					wondertap->station_table[i].info = *info;
+					free_slot = -2;
+					break;
+				}
+				if (!wondertap->station_table[i].in_use &&
+				    free_slot == -1) {
+					free_slot = i;
+				}
+			}
+			if (free_slot >= 0) {
+				wondertap->station_table[free_slot].in_use = true;
+				wondertap->station_table[free_slot].info = *info;
+			}
+		} else if (action == WONDERTAP_STATION_STATE_UPDATE) {
+			for (i = 0; i < WONDERTAP_MAX_STATION_TABLE_SIZE; i++) {
+				if (wondertap->station_table[i].in_use &&
+				    ether_addr_equal(wondertap->station_table[i].info.mac,
+						     info->mac)) {
+					wondertap->station_table[i].info = *info;
+					break;
+				}
+			}
+		} else if (action == WONDERTAP_STATION_STATE_DEL) {
+			for (i = 0; i < WONDERTAP_MAX_STATION_TABLE_SIZE; i++) {
+				if (wondertap->station_table[i].in_use &&
+				    ether_addr_equal(wondertap->station_table[i].info.mac,
+						     info->mac)) {
+					wondertap->station_table[i].in_use = false;
+					memset(&wondertap->station_table[i].info, 0,
+					       sizeof(struct wondertap_station_info));
+					break;
+				}
+			}
+		}
+	}
 
 out_unlock:
 	mutex_unlock(&wondertap->lock);

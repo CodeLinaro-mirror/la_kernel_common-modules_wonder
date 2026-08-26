@@ -36,6 +36,13 @@ struct wonder_sta_update_work {
 	enum wondertap_station_action action;
 };
 
+#define WONDERTAP_MAX_STATION_TABLE_SIZE 32
+
+struct wondertap_station_entry {
+	bool in_use;
+	struct wondertap_station_info info;
+};
+
 struct wondertap_data {
 	void *vendor_handle;
 	enum wondertap_state state;
@@ -56,6 +63,7 @@ struct wondertap_data {
 	/* MAC address for station query via debugfs */
 	u8 query_mac_addr[ETH_ALEN];
 	const struct wondertap_ops *wonder_ops;
+	struct wondertap_station_entry station_table[WONDERTAP_MAX_STATION_TABLE_SIZE];
 };
 
 /**
@@ -69,6 +77,7 @@ struct wondertap_data {
 static inline void wondertap_prep(struct wondertap_data *wondertap)
 {
 	wondertap->state = WONDERTAP_STATE_DOWN;
+	memset(wondertap->station_table, 0, sizeof(wondertap->station_table));
 	mutex_init(&wondertap->lock);
 }
 
