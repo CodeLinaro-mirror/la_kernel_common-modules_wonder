@@ -32,6 +32,20 @@ struct wonder_stats {
 	u64 rx_to_mac_cnt;
 };
 
+/**
+ * enum wonder_mac_algo - MAC address generation algorithms
+ * @MAC_ALGO_RANDOM_MAC: Always generate a new random MAC address
+ * @MAC_ALGO_FIX_MAC: Keep the existing valid MAC address, otherwise generate a random one
+ * @MAC_ALGO_SMART_MAC: Smart MAC allocation (e.g., based on specific rules or reserved for future)
+ * @MAC_ALGO_MAX: Upper bound for the MAC algorithms
+ */
+enum wonder_mac_algo {
+	MAC_ALGO_RANDOM_MAC = 0,
+	MAC_ALGO_FIX_MAC = 1,
+	MAC_ALGO_SMART_MAC = 2,
+	MAC_ALGO_MAX,
+};
+
 struct wonder_data {
 	struct ieee80211_hw *hw;
 	struct ieee80211_vif *vif;
@@ -60,6 +74,12 @@ struct wonder_data {
 	struct delayed_work channel_schedule_request_work;
 	u32 channel_schedule_request_interval;
 	struct wonder_stats stats;
+	u8 mac_algorithm;
+	u32 mac_timer_interval_minutes;
+	struct delayed_work mac_expire_work;
+	bool mac_expired;
 };
+
+int wonder_set_mac_algorithm(struct wonder_data *wonder, u8 val);
 
 #endif /* __WONDER_CORE_H__ */

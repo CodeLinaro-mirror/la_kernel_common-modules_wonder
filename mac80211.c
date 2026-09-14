@@ -518,6 +518,57 @@ static int wonder_tx_setup(struct wonder_data *wonder)
 	return 0;
 }
 
+static void wonder_mac_expire_work_cb(struct work_struct *work)
+{
+	struct wonder_data *wonder = container_of(work, struct wonder_data, mac_expire_work.work);
+
+	wonder->mac_expired = true;
+	pr_debug("%s(): MAC address timer expired\n", __func__);
+}
+
+int wonder_set_mac_algorithm(struct wonder_data *wonder, u8 algo)
+{
+	if (algo >= MAC_ALGO_MAX) {
+		pr_err("Invalid MAC algorithm value: %u\n", algo);
+		return -EINVAL;
+	}
+
+	if (wonder->mac_algorithm != algo) {
+		wonder->mac_algorithm = algo;
+		cancel_delayed_work_sync(&wonder->mac_expire_work);
+		wonder->mac_expired = true;
+	}
+
+	return 0;
+}
+
+static void wonder_update_mac_addr(struct wonder_data *wonder)
+{
+	struct wondertap_data *wondertap = wonder->wondertap_data;
+	u8 *mac_addr = wondertap->mac_addr;
+	unsigned long interval_jiffies;
+
+	interval_jiffies = (unsigned long)wonder->mac_timer_interval_minutes * 60 * HZ;
+
+	if (wonder->mac_algorithm == MAC_ALGO_FIX_MAC) {
+		if (is_valid_ether_addr(mac_addr) && !wonder->mac_expired) {
+			if (!delayed_work_pending(&wonder->mac_expire_work)) {
+				mod_delayed_work(wonder->workqueue, &wonder->mac_expire_work,
+						 interval_jiffies);
+			}
+			return;
+		}
+
+		eth_random_addr(mac_addr);
+		wonder->mac_expired = false;
+		mod_delayed_work(wonder->workqueue, &wonder->mac_expire_work, interval_jiffies);
+	} else {
+		eth_random_addr(mac_addr);
+		cancel_delayed_work_sync(&wonder->mac_expire_work);
+		wonder->mac_expired = false;
+	}
+}
+
 static int wonder_rx_setup(struct wonder_data *wonder)
 {
 	int ret;
@@ -674,6 +725,9 @@ static int wonder_start(struct ieee80211_hw *hw)
 	init_params->rate_adaptation_enable =
 		wonder->ra_enable && wondertap->cap.bits.rate_adaptation;
 	wonder->ra_enable = init_params->rate_adaptation_enable;
+
+	wonder_update_mac_addr(wonder);
+	ether_addr_copy(init_params->mac_addr, wondertap->mac_addr);
 
 	ret = wondertap_init(wondertap, init_params);
 	if (ret) {
@@ -1163,12 +1217,15 @@ int wonder_features_init(struct wonder_data *wonder)
 	INIT_DELAYED_WORK(&wonder->tx_work, wonder_flush_worker);
 	/* Prepare wondertap structure */
 	wondertap_prep(wonder->wondertap_data);
+	wonder->mac_expired = false;
+	INIT_DELAYED_WORK(&wonder->mac_expire_work, wonder_mac_expire_work_cb);
 	return 0;
 }
 
 void wonder_features_exit(struct wonder_data *wonder)
 {
 	cancel_delayed_work_sync(&wonder->tx_work);
+	cancel_delayed_work_sync(&wonder->mac_expire_work);
 	wonder_txs_queue_exit();
 	ieee80211_unregister_hw(wonder->hw);
 	pr_debug("Wonder Virtual Soft-MAC Driver unloaded successfully.\n");
@@ -1203,6 +1260,10 @@ void *wonder_mac80211_init(struct device *dev, struct wondertap_data *wondertap)
 	wonder->ra_enable = false;
 	wonder->amsdu_threshold = 8000;
 	wonder->amsdu_delay = 3000;
+	/* Default to random MAC algorithm if not configured by vendor command */
+	wonder->mac_algorithm = MAC_ALGO_RANDOM_MAC;
+	wonder->mac_timer_interval_minutes = 120;
+
 	wonder->workqueue = create_singlethread_workqueue(DRV_NAME);
 	if (!wonder->workqueue) {
 		pr_err("Failed to create workqueue\n");

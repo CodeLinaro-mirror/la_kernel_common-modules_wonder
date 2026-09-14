@@ -528,6 +528,29 @@ static const struct file_operations wonder_stats_fops = {
 	.release = single_release,
 };
 
+static int wonder_debugfs_mac_algo_get(void *data, u64 *val)
+{
+	struct wonder_data *wonder = data;
+
+	*val = wonder->mac_algorithm;
+	return 0;
+}
+
+static int wonder_debugfs_mac_algo_set(void *data, u64 val)
+{
+	struct wonder_data *wonder = data;
+
+	if (val >= MAC_ALGO_MAX)
+		return -EINVAL;
+
+	return wonder_set_mac_algorithm(wonder, (u8)val);
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(wonder_debugfs_mac_algo_fops,
+			wonder_debugfs_mac_algo_get,
+			wonder_debugfs_mac_algo_set,
+			"%llu\n");
+
 int wonder_debugfs_init(struct wonder_data *wonder)
 {
 	struct dentry *wonder_debugfs_root;
@@ -570,6 +593,10 @@ int wonder_debugfs_init(struct wonder_data *wonder)
 			    &wonder->amsdu_delay);
 	debugfs_create_bool("syna_support_enable", 0644, wonder_debugfs_root,
 			    &wonder->syna_support_enable);
+	debugfs_create_file("mac_algorithm", 0644, wonder_debugfs_root,
+			    wonder, &wonder_debugfs_mac_algo_fops);
+	debugfs_create_u32("mac_timer_interval_minutes", 0644, wonder_debugfs_root,
+			   &wonder->mac_timer_interval_minutes);
 	return 0;
 }
 

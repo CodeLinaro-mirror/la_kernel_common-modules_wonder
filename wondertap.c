@@ -74,11 +74,15 @@ int wondertap_init(struct wondertap_data *wondertap, const struct wondertap_init
 		goto out;
 	}
 
-	eth_random_addr(wondertap->mac_addr);
+	if (is_valid_ether_addr(_params->mac_addr))
+		ether_addr_copy(wondertap->mac_addr, _params->mac_addr);
+	else
+		eth_random_addr(wondertap->mac_addr);
+
 	params.channel = wondertap->cached_freq;
 	params.tx_rate = wondertap->cached_tx_rate;
-	memcpy(params.bssid, wondertap->cached_bssid, ETH_ALEN);
-	memcpy(params.mac_addr, wondertap->mac_addr, ETH_ALEN);
+	ether_addr_copy(params.bssid, wondertap->cached_bssid);
+	ether_addr_copy(params.mac_addr, wondertap->mac_addr);
 	memcpy(params.country_code, wondertap->cached_country_code,
 	       sizeof(wondertap->cached_country_code));
 
