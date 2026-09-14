@@ -922,7 +922,7 @@ static int wonder_vendor_cmd_set_features(struct wiphy *wiphy,
 	struct wonder_data *wonder = hw->priv;
 	struct nlattr *tb[WONDER_VEN_ATTR_FEATURE_MAX + 1];
 	u32 feature_id;
-	u8 enable;
+	u8 val;
 
 	if (nla_parse(tb, WONDER_VEN_ATTR_FEATURE_MAX, data, data_len,
 		      wonder_set_features_policy, NULL) < 0) {
@@ -936,23 +936,25 @@ static int wonder_vendor_cmd_set_features(struct wiphy *wiphy,
 	}
 
 	feature_id = nla_get_u32(tb[WONDER_VEN_ATTR_FEATURE_ID]);
-	enable = nla_get_u8(tb[WONDER_VEN_ATTR_FEATURE_ENABLE]);
+	val = nla_get_u8(tb[WONDER_VEN_ATTR_FEATURE_ENABLE]);
 
-	pr_debug("SET_FEATURES: feature_id=%u, enable=%u\n", feature_id, enable);
+	pr_debug("SET_FEATURES: feature_id=%u, enable=%u\n", feature_id, val);
 
 	switch (feature_id) {
 	case WONDER_FEATURE_CHANNEL_HOPPING:
-		wonder->channel_hopping_enable = enable;
+		wonder->channel_hopping_enable = val;
 		break;
 	case WONDER_FEATURE_AMSDU:
-		wonder->amsdu_enable = enable;
+		wonder->amsdu_enable = val;
 		break;
 	case WONDER_FEATURE_AMPDU:
-		wonder->ampdu_enable = enable;
+		wonder->ampdu_enable = val;
 		break;
 	case WONDER_FEATURE_RA:
-		wonder->ra_enable = enable;
+		wonder->ra_enable = val;
 		break;
+	case WONDER_FEATURE_MAC_ALGO:
+		return wonder_set_mac_algorithm(wonder, val);
 	default:
 		pr_err("Unknown feature ID: %u\n", feature_id);
 		return -EINVAL;
