@@ -9,6 +9,7 @@
 #define __WONDER_CORE_H__
 
 #include <linux/nl80211.h>
+#include <linux/atomic.h>
 
 #include "wondertap_internal.h"
 
@@ -26,10 +27,14 @@
 #define WONDER_NORMAL_MODE_MTU_SIZE 8000
 
 struct wonder_stats {
-	u64 tx_entry_cnt;
-	u64 tx_success_cnt;
-	u64 rx_entry_cnt;
-	u64 rx_to_mac_cnt;
+	atomic64_t tx_entry_cnt;
+	atomic64_t tx_success_cnt;
+	atomic64_t tx_xmit_success_cnt;
+	atomic64_t tx_xmit_drop_cnt;
+	atomic64_t tx_xmit_cn_cnt;
+	atomic64_t tx_xmit_err_cnt;
+	atomic64_t rx_entry_cnt;
+	atomic64_t rx_to_mac_cnt;
 };
 
 /**
