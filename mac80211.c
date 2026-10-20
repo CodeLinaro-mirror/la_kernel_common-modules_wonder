@@ -79,33 +79,49 @@ static rx_handler_result_t wonder_rx_80211_frame(struct wonder_data *wonder, str
 	struct ieee80211_hdr *hdr;
 	struct ieee80211_radiotap_header *radhdr;
 	struct net_device *vdev = NULL;
+	u16 it_len;
 
 	if (!wonder || !wonder->vdev) {
-		pr_err("RX received but interface not active. Dropping.\n");
+		pr_err_ratelimited("RX received but interface not active. Dropping.\n");
 		goto drop;
 	}
 
 	vdev = wonder->vdev;
 	/* --- Packet Filtering & Validation (mac80211/Wonder Driver responsibility) --- */
-	if (skb->len < 24) { /* Basic check for 802.11 header length */
-		pr_err("Dropping short RX frame.\n");
+	if (!pskb_may_pull(skb, sizeof(struct ieee80211_radiotap_header))) {
+		pr_err_ratelimited("Dropping short RX frame.\n");
 		vdev->stats.rx_length_errors++;
 		goto drop;
 	}
 
 	/* Filtering */
 	radhdr = (struct ieee80211_radiotap_header *)skb->data;
-	hdr = (struct ieee80211_hdr *)(skb->data + le16_to_cpu(radhdr->it_len));
+	it_len = le16_to_cpu(radhdr->it_len);
+	if (it_len < sizeof(struct ieee80211_radiotap_header) ||
+	    !pskb_may_pull(skb, it_len + sizeof(struct ieee80211_hdr_3addr))) {
+		pr_err_ratelimited("Dropping frame with invalid radiotap/802.11 header.\n");
+		vdev->stats.rx_length_errors++;
+		goto drop;
+	}
+	radhdr = (struct ieee80211_radiotap_header *)skb->data;
+	hdr = (struct ieee80211_hdr *)(skb->data + it_len);
+
+	if (skb->len < it_len + ieee80211_hdrlen(hdr->frame_control) ||
+	    !pskb_may_pull(skb, it_len + ieee80211_hdrlen(hdr->frame_control))) {
+		pr_err_ratelimited("Dropping frame with invalid 802.11 header length.\n");
+		vdev->stats.rx_length_errors++;
+		goto drop;
+	}
+	hdr = (struct ieee80211_hdr *)(skb->data + it_len);
 
 	if (IS_ENABLED(CONFIG_ANDROID_WONDER_RX_DEBUG)) {
-		pr_err("%s(): receiv packet from %s, send to mac80211, skb->protocol: %x, radhdr_len: %d\n",
-		       __func__, skb->dev->name, skb->protocol, radhdr->it_len);
+		pr_err_ratelimited("%s(): receiv packet from %s, send to mac80211, skb->protocol: %x, radhdr_len: %d\n",
+				   __func__, skb->dev->name, skb->protocol, it_len);
 		print_hex_dump(KERN_DEBUG, "wonder_rx_header: ", DUMP_PREFIX_NONE, 16, 1,
-			       hdr, sizeof(struct ieee80211_hdr), false);
+			       hdr, sizeof(struct ieee80211_hdr_3addr), false);
 	}
 
 	if (!wonder_80211_filter(hdr)) {
-		vdev->stats.rx_dropped++;
 		if (IS_ENABLED(CONFIG_ANDROID_WONDER_RX_DEBUG))
 			pr_err("Dropping frame with frame control: %x.\n", hdr->frame_control);
 		goto drop;
@@ -118,7 +134,7 @@ static rx_handler_result_t wonder_rx_80211_frame(struct wonder_data *wonder, str
 		dev_sw_netstats_rx_add(vdev, skb->len);
 		vdev->stats.rx_packets++;
 		vdev->stats.rx_bytes += skb->len;
-		wonder->stats.rx_to_mac_cnt++;
+		atomic64_inc(&wonder->stats.rx_to_mac_cnt);
 	}
 	/* Pass the raw 802.11 frame into the mac80211 processing pipeline. */
 	/* mac80211 now handles de-AMSDU, 802.11 -> 802.3 conversion, and netif_rx(). */
@@ -130,8 +146,7 @@ static rx_handler_result_t wonder_rx_80211_frame(struct wonder_data *wonder, str
 		netif_receive_skb(skb);
 		break;
 	default:
-		vdev->stats.rx_dropped++;
-		pr_err("Dropping Not supported data_version %d.\n", wonder->data_version);
+		pr_err_ratelimited("Dropping Not supported data_version %d.\n", wonder->data_version);
 		goto drop;
 	}
 	return RX_HANDLER_CONSUMED;
@@ -402,22 +417,46 @@ static rx_handler_result_t wonder_rx_adhoc_handler(struct wonder_data *wonder,
 	struct ieee80211_radiotap_header *radhdr;
 	struct net_device *vdev;
 	struct ieee80211_rx_status *rx_status = IEEE80211_SKB_RXCB(skb);
+	u16 it_len;
 
 	if (!wonder || !wonder->vdev) {
-		pr_err("RX received but interface not active. Dropping.\n");
+		pr_err_ratelimited("RX received but interface not active. Dropping.\n");
 		goto drop;
 	}
 
 	vdev = wonder->vdev;
 	/* --- Packet Filtering & Validation (mac80211/Wonder Driver responsibility) --- */
-	if (skb->len < 24) { /* Basic check for 802.11 header length */
-		pr_err("Dropping short RX frame.\n");
+	if (!pskb_may_pull(skb, sizeof(struct ieee80211_radiotap_header))) {
+		pr_err_ratelimited("Dropping short RX frame.\n");
+		vdev->stats.rx_length_errors++;
 		goto drop;
 	}
 
 	radhdr = (struct ieee80211_radiotap_header *)skb->data;
-	/* Pull radotap since this frame is preparing forwarded to mac80211. */
-	skb_pull(skb, le16_to_cpu(radhdr->it_len));
+	it_len = le16_to_cpu(radhdr->it_len);
+
+	if (it_len < sizeof(struct ieee80211_radiotap_header) ||
+	    !pskb_may_pull(skb, it_len + sizeof(struct ieee80211_hdr_3addr))) {
+		pr_err_ratelimited("Dropping frame with invalid radiotap/802.11 header.\n");
+		vdev->stats.rx_length_errors++;
+		goto drop;
+	}
+
+	radhdr = (struct ieee80211_radiotap_header *)skb->data;
+
+	/* Fill RX status for mac80211 operation before pulling radiotap */
+	memset(rx_status, 0, sizeof(*rx_status));
+	wonder_fill_rx_status(radhdr, rx_status);
+
+	/* Pull radiotap since this frame is preparing forwarded to mac80211. */
+	skb_pull(skb, it_len);
+	hdr = (struct ieee80211_hdr_3addr *)(skb->data);
+
+	if (!pskb_may_pull(skb, ieee80211_hdrlen(hdr->frame_control))) {
+		pr_err_ratelimited("Dropping frame with invalid 802.11 header length.\n");
+		vdev->stats.rx_length_errors++;
+		goto drop;
+	}
 	hdr = (struct ieee80211_hdr_3addr *)(skb->data);
 
 	/* Filtering */
@@ -435,22 +474,18 @@ static rx_handler_result_t wonder_rx_adhoc_handler(struct wonder_data *wonder,
 	if (wonder->syna_support_enable)
 		syna_rx_handler(wonder, skb);
 
-	/* Fill RX status for mac80211 operation */
-	memset(rx_status, 0, sizeof(*rx_status));
-	wonder_fill_rx_status(radhdr, rx_status);
-
 	/* Populate necessary metadata for mac80211 */
 	skb->dev = vdev;
 
 	if (IS_ENABLED(CONFIG_ANDROID_WONDER_RX_DEBUG)) {
-		pr_err("%s(): receiv packet from %s, send to mac80211, skb->protocol: %x, radhdr_len: %d\n",
-		       __func__, skb->dev->name, skb->protocol, radhdr->it_len);
+		pr_err_ratelimited("%s(): receiv packet from %s, send to mac80211, skb->protocol: %x, radhdr_len: %d\n",
+				   __func__, skb->dev->name, skb->protocol, it_len);
 		print_hex_dump(KERN_DEBUG, "wonder_rx_header: ", DUMP_PREFIX_NONE, 16, 1,
 			       hdr, sizeof(struct ieee80211_hdr_3addr), false);
 		print_hex_dump(KERN_DEBUG, "wonder_rx_frame: ", DUMP_PREFIX_NONE, 16, 1,
 			       skb->data, skb->len, false);
 	}
-	wonder->stats.rx_to_mac_cnt++;
+	atomic64_inc(&wonder->stats.rx_to_mac_cnt);
 	ieee80211_rx_ni(wonder->hw, skb);
 	return RX_HANDLER_CONSUMED;
 drop:
@@ -467,7 +502,7 @@ static rx_handler_result_t wonder_rx_handler(struct sk_buff **pskb)
 	struct sk_buff *skb = *pskb;
 	struct wonder_data *wonder = rcu_dereference(skb->dev->rx_handler_data);
 
-	wonder->stats.rx_entry_cnt++;
+	atomic64_inc(&wonder->stats.rx_entry_cnt);
 
 	if (IS_ENABLED(CONFIG_ANDROID_WONDER_RX_DEBUG))
 		pr_err("%s(): receiv packet from pdev %s.\n", __func__, skb->dev->name);
@@ -512,7 +547,7 @@ static int wonder_sanity_check(struct wonder_data *wonder)
 
 static int wonder_tx_setup(struct wonder_data *wonder)
 {
-	struct net_device *dev =wonder->vdev;
+	struct net_device *dev = wonder->vdev;
 
 	dev_set_mtu(dev, dev->max_mtu ? 1500 : INT_MAX);
 	return 0;
@@ -610,15 +645,15 @@ static void wonder_tx(struct ieee80211_hw *hw,
 	struct wonder_txd *txd;
 	unsigned int room = skb_headroom(skb);
 
-	wonder->stats.tx_entry_cnt++;
+	atomic64_inc(&wonder->stats.tx_entry_cnt);
 	if (unlikely(!pdev) || unlikely(!vdev)) {
-		pr_err("Physical device is not exist, dropping packet.\n");
+		pr_err_ratelimited("Physical device is not exist, dropping packet.\n");
 		goto drop;
 	}
 
 	if (room < WONDER_TX_ROOM) {
 		vdev->stats.tx_errors++;
-		pr_err("Not enough headroom, dropping packet.\n");
+		pr_err_ratelimited("Not enough headroom, dropping packet.\n");
 		goto drop;
 	}
 
@@ -628,13 +663,17 @@ static void wonder_tx(struct ieee80211_hw *hw,
 			       skb->data, skb->len, false);
 	}
 
-	if (unlikely(skb->len < sizeof(struct ieee80211_hdr))) {
-		vdev->stats.tx_errors++;
-		pr_err("TX packet too short, dropping packet.\n");
+	if (unlikely(skb->len < sizeof(struct ieee80211_hdr_3addr))) {
+		pr_err_ratelimited("Packet too short, dropping packet.\n");
 		goto drop;
 	}
 
 	hdr = (struct ieee80211_hdr *)skb->data;
+	if (unlikely(skb->len < ieee80211_hdrlen(hdr->frame_control))) {
+		pr_err_ratelimited("Packet too short for 802.11 header, dropping packet.\n");
+		goto drop;
+	}
+
 	/* The mac80211 probe request my using Broadcast BSSID correct it in here. */
 	if (wonder->iftype == NL80211_IFTYPE_ADHOC && ieee80211_is_probe_req(hdr->frame_control)) {
 		struct ieee80211_bss_conf *bss_conf = &wonder->vif->bss_conf;
@@ -671,15 +710,24 @@ static void wonder_tx(struct ieee80211_hw *hw,
 		wonder_txs_enqueue(control->sta, skb);
 
 	if (unlikely(!netif_running(pdev) || !netif_device_present(pdev))) {
-		vdev->stats.tx_dropped++;
 		goto drop;
 	} else {
+		int rc;
+
 		dev_sw_netstats_tx_add(vdev, 1, skb->len);
 		vdev->stats.tx_packets++;
 		vdev->stats.tx_bytes += skb->len;
-		wonder->stats.tx_success_cnt++;
+		atomic64_inc(&wonder->stats.tx_success_cnt);
 		/* Call the physical device's transmit handler */
-		dev_queue_xmit(skb);
+		rc = dev_queue_xmit(skb);
+		if (likely(rc == NET_XMIT_SUCCESS))
+			atomic64_inc(&wonder->stats.tx_xmit_success_cnt);
+		else if (rc == NET_XMIT_DROP)
+			atomic64_inc(&wonder->stats.tx_xmit_drop_cnt);
+		else if (rc == NET_XMIT_CN)
+			atomic64_inc(&wonder->stats.tx_xmit_cn_cnt);
+		else
+			atomic64_inc(&wonder->stats.tx_xmit_err_cnt);
 	}
 	return;
 drop:
@@ -693,7 +741,7 @@ static int wonder_start(struct ieee80211_hw *hw)
 	struct wonder_data *wonder = hw->priv;
 	struct wondertap_data *wondertap = wonder->wondertap_data;
 	struct wondertap_init_params *init_params = &wondertap->init_params;
-	const char* pdev_name = physical_name;
+	const char *pdev_name = physical_name;
 	int ret;
 
 	/* This should turn on the hardware and frame reception. */

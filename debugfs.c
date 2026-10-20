@@ -488,14 +488,24 @@ static int wonder_stats_show(struct seq_file *m, void *v)
 {
 	struct wonder_data *wonder = m->private;
 
-	seq_printf(m, "--- Wonder Driver Stats ---\n");
-	seq_printf(m, "wonder_tx_entry_cnt:            %llu\n", wonder->stats.tx_entry_cnt);
-	seq_printf(m, "wonder_tx_success_cnt:          %llu\n\n", wonder->stats.tx_success_cnt);
+	seq_puts(m, "--- Wonder Driver Stats ---\n");
+	seq_printf(m, "wonder_tx_entry_cnt:            %lld\n",
+		   (long long)atomic64_read(&wonder->stats.tx_entry_cnt));
+	seq_printf(m, "wonder_tx_success_cnt:          %lld\n",
+		   (long long)atomic64_read(&wonder->stats.tx_success_cnt));
+	seq_printf(m, "tx_xmit_success_cnt:            %lld\n",
+		   (long long)atomic64_read(&wonder->stats.tx_xmit_success_cnt));
+	seq_printf(m, "tx_xmit_drop_cnt:               %lld\n",
+		   (long long)atomic64_read(&wonder->stats.tx_xmit_drop_cnt));
+	seq_printf(m, "tx_xmit_cn_cnt:                 %lld\n",
+		   (long long)atomic64_read(&wonder->stats.tx_xmit_cn_cnt));
+	seq_printf(m, "tx_xmit_err_cnt:                %lld\n\n",
+		   (long long)atomic64_read(&wonder->stats.tx_xmit_err_cnt));
 
-	seq_printf(m, "wonder_rx_entry_cnt:            %llu (receiv from wondertap0)\n",
-		   wonder->stats.rx_entry_cnt);
-	seq_printf(m, "wonder_rx_to_mac_cnt:           %llu (forward to mac80211)\n\n",
-		   wonder->stats.rx_to_mac_cnt);
+	seq_printf(m, "wonder_rx_entry_cnt:            %lld (receiv from wondertap0)\n",
+		   (long long)atomic64_read(&wonder->stats.rx_entry_cnt));
+	seq_printf(m, "wonder_rx_to_mac_cnt:           %lld (forward to mac80211)\n\n",
+		   (long long)atomic64_read(&wonder->stats.rx_to_mac_cnt));
 
 	return 0;
 }
@@ -507,10 +517,14 @@ static ssize_t wonder_stats_write(struct file *file, const char __user *user_buf
 	struct wonder_data *wonder = m->private;
 
 	/* Reset Wonder internal counters */
-	wonder->stats.tx_entry_cnt = 0;
-	wonder->stats.tx_success_cnt = 0;
-	wonder->stats.rx_entry_cnt = 0;
-	wonder->stats.rx_to_mac_cnt = 0;
+	atomic64_set(&wonder->stats.tx_entry_cnt, 0);
+	atomic64_set(&wonder->stats.tx_success_cnt, 0);
+	atomic64_set(&wonder->stats.tx_xmit_success_cnt, 0);
+	atomic64_set(&wonder->stats.tx_xmit_drop_cnt, 0);
+	atomic64_set(&wonder->stats.tx_xmit_cn_cnt, 0);
+	atomic64_set(&wonder->stats.tx_xmit_err_cnt, 0);
+	atomic64_set(&wonder->stats.rx_entry_cnt, 0);
+	atomic64_set(&wonder->stats.rx_to_mac_cnt, 0);
 
 	return count;
 }
