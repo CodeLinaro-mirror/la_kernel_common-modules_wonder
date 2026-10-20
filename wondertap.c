@@ -48,12 +48,13 @@ static void wondertap_dump_init_params(struct wondertap_init_params *params)
 	pr_debug("    Features: AMSDU %d, AMPDU %d, RA %d, CH %d\n", params->amsdu_enable,
 		params->ampdu_enable, params->rate_adaptation_enable,
 		params->channel_hopping_enable);
+	pr_debug("    Notify: Perf Mode %d\n", params->perf_mode);
 	pr_debug("===============================================\n");
 }
 
 int wondertap_init(struct wondertap_data *wondertap, const struct wondertap_init_params *_params)
 {
-	struct wondertap_init_params params;
+	struct wondertap_init_params params = {};
 	int ret = -EOPNOTSUPP;
 	int retry;
 
@@ -97,6 +98,7 @@ int wondertap_init(struct wondertap_data *wondertap, const struct wondertap_init
 	params.channel_hopping_enable = _params->channel_hopping_enable;
 	params.ampdu_enable = _params->ampdu_enable;
 	params.amsdu_enable = _params->amsdu_enable;
+	params.perf_mode = _params->perf_mode;
 
 	wondertap_dump_init_params(&params);
 	for (retry = 0; retry <= WONDER_INIT_RETRY_CNT; retry++) {

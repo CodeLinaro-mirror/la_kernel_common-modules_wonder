@@ -66,6 +66,7 @@ struct wonder_data {
 	bool amsdu_enable;
 	bool channel_hopping_enable;
 	bool ra_enable;
+	u8 perf_mode;
 	u32 amsdu_threshold;
 	u32 amsdu_delay;
 	bool syna_support_enable;

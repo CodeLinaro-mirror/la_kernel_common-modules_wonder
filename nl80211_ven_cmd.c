@@ -953,6 +953,13 @@ static int wonder_vendor_cmd_set_features(struct wiphy *wiphy,
 	case WONDER_FEATURE_RA:
 		wonder->ra_enable = val;
 		break;
+	case WONDER_FEATURE_PERF_MODE:
+		if (val >= WONDER_PERF_MODE_MAX) {
+			pr_err("Invalid perf_mode: %u\n", val);
+			return -EINVAL;
+		}
+		WRITE_ONCE(wonder->perf_mode, val);
+		break;
 	case WONDER_FEATURE_MAC_ALGO:
 		return wonder_set_mac_algorithm(wonder, val);
 	default:
