@@ -493,6 +493,10 @@ static int wonder_stats_show(struct seq_file *m, void *v)
 		   (long long)atomic64_read(&wonder->stats.tx_entry_cnt));
 	seq_printf(m, "wonder_tx_success_cnt:          %lld\n",
 		   (long long)atomic64_read(&wonder->stats.tx_success_cnt));
+	seq_printf(m, "wonder_tx_skb_cloned_cnt:       %lld\n",
+		   (long long)atomic64_read(&wonder->stats.tx_skb_cloned_cnt));
+	seq_printf(m, "wonder_tx_skb_clone_fail_cnt:   %lld\n",
+		   (long long)atomic64_read(&wonder->stats.tx_skb_clone_fail_cnt));
 	seq_printf(m, "tx_xmit_success_cnt:            %lld\n",
 		   (long long)atomic64_read(&wonder->stats.tx_xmit_success_cnt));
 	seq_printf(m, "tx_xmit_drop_cnt:               %lld\n",
@@ -519,6 +523,8 @@ static ssize_t wonder_stats_write(struct file *file, const char __user *user_buf
 	/* Reset Wonder internal counters */
 	atomic64_set(&wonder->stats.tx_entry_cnt, 0);
 	atomic64_set(&wonder->stats.tx_success_cnt, 0);
+	atomic64_set(&wonder->stats.tx_skb_cloned_cnt, 0);
+	atomic64_set(&wonder->stats.tx_skb_clone_fail_cnt, 0);
 	atomic64_set(&wonder->stats.tx_xmit_success_cnt, 0);
 	atomic64_set(&wonder->stats.tx_xmit_drop_cnt, 0);
 	atomic64_set(&wonder->stats.tx_xmit_cn_cnt, 0);

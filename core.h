@@ -29,6 +29,8 @@
 struct wonder_stats {
 	atomic64_t tx_entry_cnt;
 	atomic64_t tx_success_cnt;
+	atomic64_t tx_skb_cloned_cnt;
+	atomic64_t tx_skb_clone_fail_cnt;
 	atomic64_t tx_xmit_success_cnt;
 	atomic64_t tx_xmit_drop_cnt;
 	atomic64_t tx_xmit_cn_cnt;
