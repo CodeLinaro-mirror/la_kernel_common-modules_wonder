@@ -632,6 +632,36 @@ static void wonder_rx_reset(struct wonder_data *wonder)
 }
 
 #define WONDER_TX_ROOM (sizeof(struct ieee80211_radiotap_header) + 1 + sizeof(struct wonder_txd))
+
+/**
+ * wonder_tx_clone_and_consume - Early buffer release for upper-layer I/O
+ * @wonder: Pointer to struct wonder_data
+ * @skb: Original transmit socket buffer
+ * @headroom: Headroom to reserve in the new SKB
+ *
+ * Clones the transmit packet with the required headroom and immediately
+ * consumes the original SKB to return the transmission buffer slot to
+ * userspace promptly.
+ *
+ * Return: Cloned struct sk_buff, or original skb if cloning fails.
+ */
+static struct sk_buff *wonder_tx_clone_and_consume(struct wonder_data *wonder,
+						   struct sk_buff *skb,
+						   unsigned int headroom)
+{
+	struct sk_buff *nskb;
+
+	nskb = skb_copy_expand(skb, headroom, 0, GFP_ATOMIC);
+	if (likely(nskb)) {
+		atomic64_inc(&wonder->stats.tx_skb_cloned_cnt);
+		dev_consume_skb_any(skb);
+		return nskb;
+	}
+
+	atomic64_inc(&wonder->stats.tx_skb_clone_fail_cnt);
+	return skb;
+}
+
 /* --- mac80211 Operation Implementations (The Core Middleware Logic) --- */
 static void wonder_tx(struct ieee80211_hw *hw,
 		      struct ieee80211_tx_control *control,
@@ -643,17 +673,10 @@ static void wonder_tx(struct ieee80211_hw *hw,
 	struct ieee80211_radiotap_header *radhdr;
 	struct ieee80211_hdr *hdr;
 	struct wonder_txd *txd;
-	unsigned int room = skb_headroom(skb);
 
 	atomic64_inc(&wonder->stats.tx_entry_cnt);
 	if (unlikely(!pdev) || unlikely(!vdev)) {
 		pr_err_ratelimited("Physical device is not exist, dropping packet.\n");
-		goto drop;
-	}
-
-	if (room < WONDER_TX_ROOM) {
-		vdev->stats.tx_errors++;
-		pr_err_ratelimited("Not enough headroom, dropping packet.\n");
 		goto drop;
 	}
 
@@ -671,6 +694,23 @@ static void wonder_tx(struct ieee80211_hw *hw,
 	hdr = (struct ieee80211_hdr *)skb->data;
 	if (unlikely(skb->len < ieee80211_hdrlen(hdr->frame_control))) {
 		pr_err_ratelimited("Packet too short for 802.11 header, dropping packet.\n");
+		goto drop;
+	}
+
+	/*
+	 * Early buffer release for upper-layer I/O design change:
+	 * Relieve ring pressure under high traffic load by cloning skb
+	 * and consuming the original to release the upper-layer buffer slot.
+	 * Reserve extra headroom for lower-tier driver DMA descriptors.
+	 */
+	if (READ_ONCE(wonder->perf_mode) != WONDER_PERF_MODE_OFF)
+		skb = wonder_tx_clone_and_consume(wonder, skb, WONDER_TX_ROOM + 64);
+
+	hdr = (struct ieee80211_hdr *)skb->data;
+
+	if (unlikely(skb_headroom(skb) < WONDER_TX_ROOM)) {
+		vdev->stats.tx_errors++;
+		pr_err_ratelimited("Not enough headroom, dropping packet.\n");
 		goto drop;
 	}
 
