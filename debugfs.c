@@ -565,6 +565,30 @@ DEFINE_SIMPLE_ATTRIBUTE(wonder_debugfs_mac_algo_fops,
 			wonder_debugfs_mac_algo_set,
 			"%llu\n");
 
+static int wonder_debugfs_perf_mode_get(void *data, u64 *val)
+{
+	struct wonder_data *wonder = data;
+
+	*val = READ_ONCE(wonder->perf_mode);
+	return 0;
+}
+
+static int wonder_debugfs_perf_mode_set(void *data, u64 val)
+{
+	struct wonder_data *wonder = data;
+
+	if (val >= WONDER_PERF_MODE_MAX)
+		return -EINVAL;
+
+	WRITE_ONCE(wonder->perf_mode, (u8)val);
+	return 0;
+}
+
+DEFINE_SIMPLE_ATTRIBUTE(wonder_debugfs_perf_mode_fops,
+			wonder_debugfs_perf_mode_get,
+			wonder_debugfs_perf_mode_set,
+			"%llu\n");
+
 int wonder_debugfs_init(struct wonder_data *wonder)
 {
 	struct dentry *wonder_debugfs_root;
@@ -599,6 +623,8 @@ int wonder_debugfs_init(struct wonder_data *wonder)
 			    &wonder->ampdu_enable);
 	debugfs_create_bool("channel_hopping_enable", 0644, wonder_debugfs_root,
 			    &wonder->channel_hopping_enable);
+	debugfs_create_file("perf_mode", 0644, wonder_debugfs_root,
+			    wonder, &wonder_debugfs_perf_mode_fops);
 	debugfs_create_bool("ra_enable", 0644, wonder_debugfs_root,
 			    &wonder->ra_enable);
 	debugfs_create_u32("amsdu_threshold", 0644, wonder_debugfs_root,

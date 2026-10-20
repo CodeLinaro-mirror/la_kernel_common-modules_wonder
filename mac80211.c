@@ -774,6 +774,12 @@ static int wonder_start(struct ieee80211_hw *hw)
 		wonder->ra_enable && wondertap->cap.bits.rate_adaptation;
 	wonder->ra_enable = init_params->rate_adaptation_enable;
 
+	/* Perf Mode */
+	if (wondertap->wifi_ver >= WONDER_VERSION_3_6_6)
+		init_params->perf_mode = wonder->perf_mode;
+	else
+		init_params->perf_mode = WONDER_PERF_MODE_OFF;
+
 	wonder_update_mac_addr(wonder);
 	ether_addr_copy(init_params->mac_addr, wondertap->mac_addr);
 
@@ -1306,6 +1312,7 @@ void *wonder_mac80211_init(struct device *dev, struct wondertap_data *wondertap)
 	wonder->amsdu_enable = true;
 	wonder->channel_hopping_enable = false;
 	wonder->ra_enable = false;
+	wonder->perf_mode = WONDER_PERF_MODE_OFF;
 	wonder->amsdu_threshold = 8000;
 	wonder->amsdu_delay = 3000;
 	/* Default to random MAC algorithm if not configured by vendor command */

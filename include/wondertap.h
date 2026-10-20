@@ -425,6 +425,16 @@ struct wondertap_capability {
 };
 
 /**
+ * @brief Enumeration of Perf Mode settings.
+ */
+enum wondertap_perf_mode {
+	WONDER_PERF_MODE_OFF  = 0,
+	WONDER_PERF_MODE_HIGH = 1,
+	WONDER_PERF_MODE_MID  = 2,
+	WONDER_PERF_MODE_MAX,
+};
+
+/**
  * @brief Enumeration of station capabilities.
  *
  * Defines the supported PHY capabilities for a station, used to construct
@@ -557,7 +567,11 @@ struct wondertap_init_params {
 	 * @note Includes the null terminator (\0), hence the size of 3.
 	 */
 	char country_code[3];
-	u8 reserved3;
+
+	/**
+	 * @brief Perf mode selection (WONDER_PERF_MODE_OFF, HIGH, MID).
+	 */
+	u8 perf_mode;
 
 	/**
 	 * @brief The initial transmission rate mask.
