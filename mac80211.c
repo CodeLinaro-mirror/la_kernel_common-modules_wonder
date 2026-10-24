@@ -106,8 +106,7 @@ static rx_handler_result_t wonder_rx_80211_frame(struct wonder_data *wonder, str
 	radhdr = (struct ieee80211_radiotap_header *)skb->data;
 	hdr = (struct ieee80211_hdr *)(skb->data + it_len);
 
-	if (skb->len < it_len + ieee80211_hdrlen(hdr->frame_control) ||
-	    !pskb_may_pull(skb, it_len + ieee80211_hdrlen(hdr->frame_control))) {
+	if (!pskb_may_pull(skb, it_len + ieee80211_hdrlen(hdr->frame_control))) {
 		pr_err_ratelimited("Dropping frame with invalid 802.11 header length.\n");
 		vdev->stats.rx_length_errors++;
 		goto drop;
@@ -638,20 +637,22 @@ static void wonder_rx_reset(struct wonder_data *wonder)
  * @wonder: Pointer to struct wonder_data
  * @skb: Original transmit socket buffer
  * @headroom: Headroom to reserve in the new SKB
+ * @tailroom: Tailroom to reserve in the new SKB
  *
- * Clones the transmit packet with the required headroom and immediately
- * consumes the original SKB to return the transmission buffer slot to
- * userspace promptly.
+ * Clones the transmit packet with the required headroom and tailroom, and
+ * immediately consumes the original SKB to return the transmission buffer slot
+ * to userspace promptly.
  *
  * Return: Cloned struct sk_buff, or original skb if cloning fails.
  */
 static struct sk_buff *wonder_tx_clone_and_consume(struct wonder_data *wonder,
 						   struct sk_buff *skb,
-						   unsigned int headroom)
+						   unsigned int headroom,
+						   unsigned int tailroom)
 {
 	struct sk_buff *nskb;
 
-	nskb = skb_copy_expand(skb, headroom, 0, GFP_ATOMIC);
+	nskb = skb_copy_expand(skb, headroom, tailroom, GFP_ATOMIC);
 	if (likely(nskb)) {
 		atomic64_inc(&wonder->stats.tx_skb_cloned_cnt);
 		dev_consume_skb_any(skb);
@@ -686,13 +687,13 @@ static void wonder_tx(struct ieee80211_hw *hw,
 			       skb->data, skb->len, false);
 	}
 
-	if (unlikely(skb->len < sizeof(struct ieee80211_hdr_3addr))) {
+	if (unlikely(!pskb_may_pull(skb, sizeof(struct ieee80211_hdr_3addr)))) {
 		pr_err_ratelimited("Packet too short, dropping packet.\n");
 		goto drop;
 	}
 
 	hdr = (struct ieee80211_hdr *)skb->data;
-	if (unlikely(skb->len < ieee80211_hdrlen(hdr->frame_control))) {
+	if (unlikely(!pskb_may_pull(skb, ieee80211_hdrlen(hdr->frame_control)))) {
 		pr_err_ratelimited("Packet too short for 802.11 header, dropping packet.\n");
 		goto drop;
 	}
@@ -703,8 +704,13 @@ static void wonder_tx(struct ieee80211_hw *hw,
 	 * and consuming the original to release the upper-layer buffer slot.
 	 * Reserve extra headroom for lower-tier driver DMA descriptors.
 	 */
-	if (READ_ONCE(wonder->perf_mode) != WONDER_PERF_MODE_OFF)
-		skb = wonder_tx_clone_and_consume(wonder, skb, WONDER_TX_ROOM + 64);
+	if (READ_ONCE(wonder->perf_mode) != WONDER_PERF_MODE_OFF) {
+		unsigned int headroom = WONDER_TX_ROOM + max_t(unsigned int,
+							       LL_RESERVED_SPACE(pdev), 64);
+
+		skb = wonder_tx_clone_and_consume(wonder, skb, headroom,
+						  pdev->needed_tailroom);
+	}
 
 	hdr = (struct ieee80211_hdr *)skb->data;
 
@@ -816,7 +822,7 @@ static int wonder_start(struct ieee80211_hw *hw)
 
 	/* Perf Mode */
 	if (wondertap->wifi_ver >= WONDER_VERSION_3_6_6)
-		init_params->perf_mode = wonder->perf_mode;
+		init_params->perf_mode = READ_ONCE(wonder->perf_mode);
 	else
 		init_params->perf_mode = WONDER_PERF_MODE_OFF;
 
