@@ -183,6 +183,7 @@ struct ieee80211_supported_band wonder_band_5ghz = {
 	.ht_cap.cap = IEEE80211_HT_CAP_SUP_WIDTH_20_40 |
 			IEEE80211_HT_CAP_SM_PS |
 			IEEE80211_HT_CAP_SGI_20 |
+			IEEE80211_HT_CAP_SGI_40 |
 			IEEE80211_HT_CAP_MAX_AMSDU,
 	.ht_cap.ampdu_factor = IEEE80211_HT_MAX_AMPDU_64K,
 	.ht_cap.ampdu_density = IEEE80211_HT_MPDU_DENSITY_NONE,
@@ -197,7 +198,9 @@ struct ieee80211_supported_band wonder_band_5ghz = {
 	.vht_cap.cap = IEEE80211_VHT_CAP_MAX_MPDU_LENGTH_7991 |
 					IEEE80211_VHT_CAP_SHORT_GI_80 |
 					IEEE80211_VHT_CAP_RXSTBC_1 |
-					IEEE80211_VHT_CAP_SU_BEAMFORMER_CAPABLE,
+					IEEE80211_VHT_CAP_SU_BEAMFORMER_CAPABLE |
+					(IEEE80211_VHT_MAX_AMPDU_1024K <<
+					 IEEE80211_VHT_CAP_MAX_A_MPDU_LENGTH_EXPONENT_SHIFT),
 	.vht_cap.vht_mcs = {
 		.rx_mcs_map = cpu_to_le16(
 			(IEEE80211_VHT_MCS_SUPPORT_0_9 << 0) |   /* NSS=1 */
